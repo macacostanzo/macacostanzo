@@ -14,6 +14,31 @@ una estrategia de inversión de largo plazo.
 4. Primera vez: `📊 Inversiones → ⚙️ Inicializar Hojas`, después
    `🔐 Configurar Acceso IOL`, y finalmente `🔄 Actualizar Todo`.
 
+## v3.4 — split ajustado en el PRECIO de Reentrada, no solo en la cantidad
+
+Corrección sobre v3.3: cuando un split llega bien capturado como movimiento
+("Pago de Dividendos(TICKER)" con cantidad de títulos > 0 y monto = 0 —
+la misma señal que `calcularPosiciones()` ya usaba para sumar cantidad sin
+tocar costo), la CANTIDAD ya quedaba correcta, pero el PRECIO de la última
+Compra/Venta usado en "Reentrada" seguía siendo el precio pre-split. Eso
+inflaba la caída igual, aunque la cantidad estuviera bien.
+
+- Nuevo `_calcularSplitsPorTicker()`: recorre los movimientos de cada
+  ticker en orden cronológico, va llevando la cantidad tenida en cada
+  momento, y cada vez que aparece una acreditación de títulos sin
+  contrapartida en efectivo calcula el ratio (`(cantidad antes +
+  acreditados) / cantidad antes`) y la fecha en que pasó.
+- En el Radar, el precio de la última operación se divide por el producto
+  de todos los ratios de split ocurridos DESPUÉS de esa operación antes de
+  comparar contra el precio actual. Si hubo ajuste, la columna "Última
+  Operación" lo aclara (`ajustado x2.00 por split`).
+- La detección de v3.3 (columna "⚠️ Revisar Split/Canje" en Posiciones,
+  comparando contra la cantidad real de la API) queda como red de
+  seguridad para el caso en que el split NO haya entrado como movimiento
+  importable — ahí sigue sin poder ajustarse el precio automáticamente y
+  el ticker se sigue excluyendo de Reentrada en vez de mostrar un número
+  incorrecto.
+
 ## v3.3 — detección de splits/canjes de CEDEAR
 
 La sección "Reentrada" del Radar comparaba el precio de tu última compra/venta

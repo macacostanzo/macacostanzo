@@ -1,17 +1,24 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.3                    ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.4                    ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.4:                                               ║
+ * ║  - Ajuste de splits en Reentrada: cuando un split llega como  ║
+ * ║    acreditación de títulos sin efectivo (cantidad>0, monto=0, ║
+ * ║    la misma señal que ya usaba calcularPosiciones() para la   ║
+ * ║    cantidad), ahora también se usa para dividir el precio de  ║
+ * ║    la última Compra/Venta por el ratio del split antes de     ║
+ * ║    compararlo con el precio actual. Antes solo se ajustaba la ║
+ * ║    cantidad y quedaba una caída falsa en Reentrada.           ║
  * ║  CAMBIOS v3.3:                                               ║
- * ║  - Detección de splits/canjes de CEDEAR no capturados por    ║
- * ║    Movimientos: se compara la cantidad calculada contra la   ║
- * ║    cantidad real que informa HOY la API de IOL (Posiciones,  ║
- * ║    cols "Cantidad IOL (hoy)" / "⚠️ Revisar Split/Canje").     ║
- * ║  - El Radar excluye de "Reentrada" los tickers marcados así   ║
- * ║    (la comparación de precio contra una cantidad vieja daba   ║
- * ║    variaciones falsas) y los avisa aparte. Caídas >40% que    ║
- * ║    igual pasan el filtro se marcan "verificar split".         ║
+ * ║  - Detección de splits/canjes de CEDEAR NO capturados por     ║
+ * ║    Movimientos (red de seguridad para cuando la acreditación  ║
+ * ║    de títulos no llegó como movimiento importable): se        ║
+ * ║    compara la cantidad calculada contra la cantidad real que  ║
+ * ║    informa HOY la API de IOL (Posiciones, cols "Cantidad IOL  ║
+ * ║    (hoy)" / "⚠️ Revisar Split/Canje"). El Radar excluye de     ║
+ * ║    "Reentrada" los tickers marcados así y los avisa aparte.   ║
  * ║  CAMBIOS v3.2:                                               ║
  * ║  - Nueva hoja "Config": targets de asignación (RV/RF/Mixta)  ║
  * ║    y umbrales de riesgo/rebalanceo/TIR ahora se leen de la   ║
@@ -898,6 +905,66 @@ function _parseTipo(str) {
     }
   }
   return { tipo: 'OTRO', ticker: null };
+}
+
+// ─────────────────────────────────────────────
+// DETECCIÓN DE SPLITS — a partir de acreditaciones de títulos sin
+// contrapartida en efectivo (misma señal que calcularPosiciones() ya usa
+// para sumar cantidad sin tocar costo: "Pago de Dividendos" con cantidad
+// > 0 y monto ≈ 0). Se arma, por ticker, la cantidad tenida en cada
+// momento y se detecta el ratio de cada acreditación así.
+// ─────────────────────────────────────────────
+function _calcularSplitsPorTicker(movs) {
+  const porTicker = {};
+  movs.forEach(m => {
+    if (!m.tickerBase) return;
+    if (!porTicker[m.tickerBase]) porTicker[m.tickerBase] = [];
+    porTicker[m.tickerBase].push(m);
+  });
+
+  const splitsPorTicker = {}; // tickerBase -> [{ fecha, ratio }] ordenados por fecha
+
+  Object.entries(porTicker).forEach(([ticker, lista]) => {
+    lista.sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0);
+
+    let cantidadAcumulada = 0;
+    const splits = [];
+
+    lista.forEach(m => {
+      const cantAbs = Math.abs(m.cantidad || 0);
+      const montoAbs = Math.abs(m.montoUSD || 0);
+
+      if (['COMPRA', 'SUSCRIPCION_FCI', 'TRANSF_IN'].includes(m.tipo)) {
+        cantidadAcumulada += cantAbs;
+
+      } else if (['VENTA', 'RESCATE_FCI', 'TRANSF_OUT'].includes(m.tipo)) {
+        cantidadAcumulada -= cantAbs;
+
+      } else if (['RENTA', 'DIVIDENDO'].includes(m.tipo) && cantAbs > 0 && montoAbs < 0.01) {
+        // Acreditación de títulos sin valor en efectivo → split / canje de ratio
+        if (cantidadAcumulada > 0) {
+          splits.push({ fecha: m.fecha, ratio: (cantidadAcumulada + cantAbs) / cantidadAcumulada });
+        }
+        cantidadAcumulada += cantAbs;
+
+      } else if (m.tipo === 'AMORTIZACION') {
+        if (m.cantidad > 0) cantidadAcumulada += cantAbs;
+        else if (m.cantidad < 0) cantidadAcumulada = 0;
+      }
+    });
+
+    if (splits.length > 0) splitsPorTicker[ticker] = splits;
+  });
+
+  return splitsPorTicker;
+}
+
+// Producto de los ratios de todos los splits ocurridos DESPUÉS de fechaDesde
+// — para llevar un precio histórico "pre-split" a equivalente actual.
+function _factorSplitDesde(splitsPorTicker, tickerBase, fechaDesde) {
+  const splits = splitsPorTicker[tickerBase];
+  if (!splits) return 1;
+  return splits.reduce((acc, s) => s.fecha > fechaDesde ? acc * s.ratio : acc, 1);
 }
 
 // ─────────────────────────────────────────────
@@ -2871,7 +2938,13 @@ function generarRadar() {
     if (ticker && alerta.includes('⚠️')) tickersRevisar.add(ticker);
   }
 
-  const ultimaOp = {}; // tickerBase -> { fecha, precioUSD, tipo }
+  // Splits detectados a partir de acreditaciones de títulos sin efectivo
+  // (ver _calcularSplitsPorTicker) — para llevar el precio de la última
+  // operación a equivalente "post-split" antes de comparar contra el
+  // precio actual.
+  const splitsPorTicker = _calcularSplitsPorTicker(movs);
+
+  const ultimaOp = {}; // tickerBase -> { fecha, fechaStr, precioUSD, tipo }
   movs.forEach(m => {
     if (!['COMPRA', 'VENTA'].includes(m.tipo)) return;
     if (!m.tickerBase) return;
@@ -2882,23 +2955,29 @@ function generarRadar() {
     const fecha    = new Date(m.fecha + 'T12:00:00Z');
     const existing = ultimaOp[m.tickerBase];
     if (!existing || fecha > existing.fecha) {
-      ultimaOp[m.tickerBase] = { fecha, precioUSD, tipo: m.tipo };
+      ultimaOp[m.tickerBase] = { fecha, fechaStr: m.fecha, precioUSD, tipo: m.tipo };
     }
   });
 
   const reentradas = [];
   Object.entries(ultimaOp).forEach(([tickerBase, op]) => {
-    if (tickersRevisar.has(tickerBase)) return; // posible split → no comparar
+    if (tickersRevisar.has(tickerBase)) return; // posible split/canje sin detectar → no comparar
 
     const precioActual = precioActualMap[tickerBase] || 0;
     if (!precioActual) return;
 
-    const variacion = (precioActual - op.precioUSD) / op.precioUSD;
+    // Ajustar el precio de referencia por los splits ocurridos DESPUÉS de
+    // esa operación — si no, un split infla artificialmente la caída.
+    const factorSplit = _factorSplitDesde(splitsPorTicker, tickerBase, op.fechaStr);
+    const precioRefAjustado = op.precioUSD / factorSplit;
+
+    const variacion = (precioActual - precioRefAjustado) / precioRefAjustado;
     if (variacion <= -0.10) {
       reentradas.push({
         ticker: tickerBase,
+        factorSplit,
         fechaOp: _fmtFecha(op.fecha),
-        precioRef: op.precioUSD,
+        precioRef: precioRefAjustado,
         precioActual,
         variacion,
         // Una caída >40% en un solo nombre entre dos operaciones propias es
@@ -2920,9 +2999,11 @@ function generarRadar() {
       const signo = r.variacion >= 0 ? '+' : '';
       const variacionTxt = signo + (r.variacion * 100).toFixed(1) + '%'
         + (r.sospechosa ? ' ⚠️ verificar split' : '');
+      const opTxt = r.tipo + ' ' + r.fechaOp
+        + (r.factorSplit > 1.001 ? ` (ajustado x${r.factorSplit.toFixed(2)} por split)` : '');
       fila(f, [
         r.ticker,
-        r.tipo + ' ' + r.fechaOp,
+        opTxt,
         'USD ' + r.precioRef.toFixed(2),
         'USD ' + r.precioActual.toFixed(2),
         variacionTxt
