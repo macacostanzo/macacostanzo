@@ -87,6 +87,27 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.18 — diagnóstico de ticker puntual (TLCMO/TLCTO seguían mal)
+
+Se reportó que TLCMO/TLCTO en `Posiciones` seguían con Precio Prom vs
+Precio Actual no comparables, a pesar de que el diagnóstico de
+Clasificación Renta Fija (v3.17) no encontró nada raro en `Equivalencias`
+— y la duda de si "Reparar Tipo Cuenta" (v3.11) las afectó. Revisando el
+código: para "Pago de Renta(TLCMO US$)", `_parseTipo()` resuelve al mismo
+ticker `TLCMO` que la pata en pesos (la moneda se determina por la
+columna Tipo Cuenta, no por el ticker), así que `repararTipoCuenta...()`
+no debería tocarlas — pero sin acceso a la planilla real para confirmarlo
+(se perdió el acceso a Drive en esta sesión), no se puede asegurar sin
+ver los datos.
+
+- Nuevo menú **🔍 Diagnóstico: Ticker Puntual**: pide un ticker por
+  prompt y muestra de una sola vez sus filas de Equivalencias (más
+  cualquier otro ticker que comparta su Ticker_Base — para revelar pares
+  ARS/USD mal vinculados), todos sus movimientos con cómo se interpreta
+  cada uno (tipo, moneda, precio, monto, tipoActivo, clase), el
+  cantActual/costoActual acumulado, y el precio que trae la API — todo
+  junto, en vez de pedir datos sueltos de a poco.
+
 ## v3.17 — el fix de v3.16 no alcanzaba a todas las ONs
 
 Se reportó que seguía mal en otras obligaciones negociables (ej. Precio

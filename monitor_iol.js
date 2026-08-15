@@ -1,8 +1,16 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.17                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.18                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.18:                                               ║
+ * ║  - Nuevo menú "🔍 Diagnóstico: Ticker Puntual": pide un ticker  ║
+ * ║    y vuelca de una sola vez sus filas de Equivalencias (más    ║
+ * ║    cualquier otro ticker que comparta su Ticker_Base), todos   ║
+ * ║    sus movimientos con cómo se interpreta cada uno, el         ║
+ * ║    cantActual/costoActual resultante y el precio que trae la   ║
+ * ║    API — para diagnosticar un caso puntual (ej. TLCMO/TLCTO)   ║
+ * ║    de una sola corrida en vez de ir pidiendo datos sueltos.    ║
  * ║  CAMBIOS v3.17:                                               ║
  * ║  - El fix de escala de v3.16 no alcanzaba a todas las ONs: el  ║
  * ║    chequeo esRF exigía que "Tipo" en Equivalencias fuera        ║
@@ -327,6 +335,7 @@ function onOpen() {
     .addItem('🔍 Diagnóstico: Movimientos de Cuenta (depósitos/extracciones)', 'diagnosticarMovimientosCuenta')
     .addItem('🔍 Tickers Pendientes',  'verTickersPendientes')
     .addItem('🔍 Diagnóstico: Clasificación Renta Fija', 'diagnosticarClasificacionRF')
+    .addItem('🔍 Diagnóstico: Ticker Puntual', 'diagnosticarTicker')
     .addItem('🎯 Generar Radar', 'generarRadar')
     .addToUi();
 }
@@ -1697,6 +1706,70 @@ function diagnosticarClasificacionRF() {
       (sospechosos.length > 20 ? `\n... y ${sospechosos.length - 20} más.` : '') +
       '\n\nCorregí el texto exacto de esas celdas y volvé a correr "Actualizar Todo".'
     );
+  }
+}
+
+// ─────────────────────────────────────────────
+// DIAGNÓSTICO — TICKER PUNTUAL (todo de una sola vez)
+// Pide un ticker por prompt y muestra: sus filas en Equivalencias (más
+// cualquier otro ticker que comparta su mismo Ticker_Base, para revelar
+// pares ARS/USD mal vinculados), todos sus movimientos en Movimientos
+// con cómo se interpreta cada uno (tipo, ticker resuelto, moneda,
+// precio/monto), y el cantActual/costoActual/tipoActivo resultante — en
+// vez de ir pidiendo datos sueltos de a poco.
+// ─────────────────────────────────────────────
+function diagnosticarTicker() {
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.prompt('🔍 Diagnóstico de un ticker', 'Ingresá el ticker (ej. TLCMO):', ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const tickerBuscado = resp.getResponseText().trim().toUpperCase();
+  if (!tickerBuscado) { ui.alert('No ingresaste ningún ticker.'); return; }
+
+  try {
+    const eqMap = _cargarEquivalencias();
+    const eqEntrada = eqMap[tickerBuscado] || null;
+    const tickerBase = eqEntrada ? (eqEntrada.tickerBase || tickerBuscado) : tickerBuscado;
+
+    // Todas las filas de Equivalencias que resuelven a este mismo Ticker_Base
+    const relacionados = Object.entries(eqMap)
+      .filter(([iol, e]) => iol === tickerBuscado || (e.tickerBase || iol) === tickerBase)
+      .map(([iol, e]) => `  ${iol}: Ticker_Base='${e.tickerBase}' Clase='${e.clase}' Tipo='${e.tipo}' Moneda='${e.moneda}'`)
+      .join('\n');
+
+    // Movimientos que resuelven a este Ticker_Base
+    const movs = procesarMovimientos();
+    const movsTicker = movs.filter(m => m.tickerBase === tickerBase);
+
+    let cantActual = 0, costoActual = 0, ingresos = 0;
+    const detalleMovs = movsTicker.map(m => {
+      const cantAbs = Math.abs(m.cantidad);
+      const montoAbs = Math.abs(m.montoUSD || 0);
+      if (['COMPRA','SUSCRIPCION_FCI','TRANSF_IN'].includes(m.tipo)) {
+        cantActual += cantAbs; costoActual += montoAbs;
+      } else if (['VENTA','RESCATE_FCI','TRANSF_OUT'].includes(m.tipo)) {
+        cantActual -= cantAbs; costoActual -= montoAbs;
+      } else if (['RENTA','DIVIDENDO'].includes(m.tipo) && montoAbs > 0) {
+        ingresos += m.montoUSD || 0;
+      }
+      return `  ${m.fecha} | ${m.tipo} | cant=${m.cantidad} | precioUSD=${m.precioUSD} | montoUSD=${m.montoUSD} | moneda=${m.moneda} | tipoActivo='${m.tipoActivo}' | clase='${m.clase}'`;
+    }).join('\n');
+
+    const precioData = (() => {
+      try { return (_obtenerPreciosIOL())[tickerBase] || {}; } catch(e) { return { error: e.message }; }
+    })();
+
+    const mensaje =
+      `Ticker buscado: ${tickerBuscado} → Ticker_Base resuelto: ${tickerBase}\n\n` +
+      `── Equivalencias (todo lo que comparte este Ticker_Base) ──\n${relacionados || '  (nada encontrado)'}\n\n` +
+      `── Movimientos (${movsTicker.length}) ──\n${detalleMovs || '  (ninguno)'}\n\n` +
+      `── Acumulado ──\ncantActual: ${cantActual} | costoActual: ${costoActual.toFixed(2)} | ingresos: ${ingresos.toFixed(2)}\n\n` +
+      `── Precio actual desde API ──\n${JSON.stringify(precioData)}`;
+
+    Logger.log(mensaje);
+    ui.alert('🔍 Diagnóstico: ' + tickerBuscado + '\n\n' + mensaje.substring(0, 1500) +
+      (mensaje.length > 1500 ? '\n\n(...) ver el resto en Ejecuciones' : ''));
+  } catch(e) {
+    ui.alert('❌ Error: ' + e.message + '\n' + e.stack);
   }
 }
 
