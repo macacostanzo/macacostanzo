@@ -36,6 +36,14 @@ extender `importarMovimientosIOL()` (o agregar una función nueva) para
 traer depósitos/extracciones automáticamente. `Ingresos_Egresos` quedaría
 como respaldo solo para lo que la API no capture.
 
+**Ronda 1** (probada contra la cuenta real de Frank): `/api/v2/estadocuenta`
+da 200 pero solo trae saldos (nada nuevo, ya lo usa `_actualizarSaldoIOL`).
+`/api/v2/estadocuenta/movimientos` da 500 (Runtime Error, no 404) — el
+endpoint probablemente existe pero le falta algo. `/api/v2/movimientos` y
+`/api/movimientos` dan 404 — no existen. El diagnóstico ahora saca el
+número de cuenta real de `/api/v2/estadocuenta` (ej. `310379`) y prueba
+variantes con ese número en la URL y con `fechaDesde`/`fechaHasta`.
+
 ## v3.5 — Reentrada restringida a Renta Variable
 
 Con datos reales apareció el motivo por el que ni el ajuste de split de v3.4

@@ -2646,12 +2646,34 @@ datos.slice(1).forEach(fila => {
 // ─────────────────────────────────────────────
 function diagnosticarMovimientosCuenta() {
   const ui = SpreadsheetApp.getUi();
+  const hasta = _fmtFecha(new Date());
+  const desdeDate = new Date();
+  desdeDate.setDate(desdeDate.getDate() - 90);
+  const desde = _fmtFecha(desdeDate);
+
+  // Ronda 1: ya sabemos que /api/v2/estadocuenta da 200 (solo saldos) y que
+  // /api/v2/estadocuenta/movimientos da 500 (probablemente le falta el
+  // número de cuenta y/o rango de fechas). Se usa el número de cuenta real
+  // devuelto por estadocuenta para armar variantes más específicas.
+  let numerosCuenta = [];
+  try {
+    const estado = _fetchIOL('/api/v2/estadocuenta');
+    numerosCuenta = (estado.cuentas || [])
+      .map(c => c.numero)
+      .filter(Boolean)
+      .filter((v, i, arr) => arr.indexOf(v) === i); // únicos
+  } catch(e) {
+    Logger.log('No se pudo leer estadocuenta para sacar el número de cuenta: ' + e.message);
+  }
+
   const candidatos = [
-    '/api/v2/estadocuenta',
-    '/api/v2/estadocuenta/movimientos',
-    '/api/v2/movimientos',
-    '/api/movimientos',
+    `/api/v2/estadocuenta/movimientos?fechaDesde=${desde}&fechaHasta=${hasta}`,
   ];
+  numerosCuenta.forEach(num => {
+    candidatos.push(`/api/v2/estadocuenta/${num}/movimientos`);
+    candidatos.push(`/api/v2/estadocuenta/${num}/movimientos?fechaDesde=${desde}&fechaHasta=${hasta}`);
+    candidatos.push(`/api/v2/movimientos/${num}`);
+  });
 
   const resultados = [];
   candidatos.forEach(ep => {
@@ -2667,7 +2689,8 @@ function diagnosticarMovimientosCuenta() {
   const mensaje = resultados.join('\n\n─────────────\n\n');
   Logger.log(mensaje);
   ui.alert(
-    '🔍 Diagnóstico: movimientos de cuenta\n\n' +
+    '🔍 Diagnóstico: movimientos de cuenta (ronda 2)\n\n' +
+    'Cuentas detectadas: ' + (numerosCuenta.join(', ') || 'ninguna') + '\n' +
     'Se probaron ' + candidatos.length + ' endpoints. Detalle completo en\n' +
     'Extensiones → Apps Script → Ejecuciones (o Ver → Registros).\n\n' +
     mensaje.substring(0, 1200)
