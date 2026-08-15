@@ -1,8 +1,17 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.13                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.14                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.14:                                               ║
+ * ║  - Fix: AL29D tenía su propio Ticker_Base en vez de apuntar a  ║
+ * ║    AL29 (a diferencia de AL30/AL30D, que sí están bien         ║
+ * ║    vinculados) — comprar en pesos y vender en dólares (o al    ║
+ * ║    revés) dejaba una posición fantasma que nunca se cerraba,   ║
+ * ║    aunque en la realidad ya estaba vendida.                    ║
+ * ║  - Nuevo menú "🔧 Reparar Ticker_Base": revisa TODOS los pares  ║
+ * ║    ARS/USD de Equivalencias (no solo AL29D) y corrige          ║
+ * ║    cualquiera con el mismo problema en la planilla real.       ║
  * ║  CAMBIOS v3.13:                                               ║
  * ║  - Nuevo menú "🔍 Diagnóstico: Valor Total vs IOL": compara el  ║
  * ║    "Valor Actual" que calcula el sheet (suma cantidad×precio   ║
@@ -283,6 +292,7 @@ function onOpen() {
     .addItem('🎛️ Ver/Editar Config (targets y riesgo)', 'abrirConfig')
     .addItem('⚙️ Diagnostico',         'diagnosticarPosiciones')
     .addItem('🔧 Reparar Tipo Cuenta (precios USD mal etiquetados)', 'repararTipoCuentaMovimientos')
+    .addItem('🔧 Reparar Ticker_Base (posiciones fantasma ARS/USD)', 'repararTickerBaseEquivalencias')
     .addItem('🔍 Diagnóstico: Saldo IOL', 'diagnosticarSaldoIOL')
     .addItem('🔍 Diagnóstico: Valor Total vs IOL', 'diagnosticarValorTotal')
     .addItem('🔍 Diagnóstico: Movimientos de Cuenta (depósitos/extracciones)', 'diagnosticarMovimientosCuenta')
@@ -731,6 +741,56 @@ function repararTipoCuentaMovimientos() {
       `Corré "🔄 Actualizar Todo" ahora para recalcular todo con los precios correctos.\n\n` +
       `Ejemplos corregidos:\n` + detalle.join('\n') +
       (corregidas > detalle.length ? `\n... y ${corregidas - detalle.length} más.` : '')
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// REPARAR TICKER_BASE INCONSISTENTE EN EQUIVALENCIAS
+// Un ticker USD terminado en "D" (ej. AL29D) debería tener el mismo
+// Ticker_Base que su par en pesos (ej. AL29), para que se consoliden
+// como UNA sola posición (igual que ya está bien AL30/AL30D). Si en vez
+// de eso el "D" apunta a sí mismo como Ticker_Base, comprar en un lado y
+// vender en el otro deja una posición fantasma que nunca se cierra —
+// aunque en la realidad ya se vendió todo.
+// ─────────────────────────────────────────────
+function repararTickerBaseEquivalencias() {
+  const ui    = SpreadsheetApp.getUi();
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(HOJAS.EQUIVALENCIAS);
+  if (!sheet) { ui.alert('No existe la hoja "Equivalencias".'); return; }
+
+  const datos = sheet.getDataRange().getValues();
+  const porTicker = {}; // ticker_iol -> { fila (1-indexed en la hoja), tickerBase, moneda }
+  datos.slice(1).forEach((fila, i) => {
+    const ticker = String(fila[0] || '').trim();
+    if (!ticker) return;
+    porTicker[ticker] = { fila: i + 2, tickerBase: String(fila[1] || '').trim(), moneda: String(fila[4] || '').trim() };
+  });
+
+  let corregidas = 0;
+  const detalle = [];
+  Object.entries(porTicker).forEach(([ticker, info]) => {
+    if (!ticker.endsWith('D') || info.moneda !== 'USD') return;
+    const baseCandidata = ticker.slice(0, -1);
+    const infoBase = porTicker[baseCandidata];
+    if (!infoBase || infoBase.moneda === 'USD') return; // no es el par ARS/USD esperado
+    if (info.tickerBase === infoBase.tickerBase) return; // ya está bien
+
+    sheet.getRange(info.fila, 2).setValue(infoBase.tickerBase);
+    corregidas++;
+    detalle.push(`${ticker}: Ticker_Base '${info.tickerBase}' → '${infoBase.tickerBase}'`);
+  });
+
+  if (corregidas === 0) {
+    ui.alert('✅ No se encontró ningún par ARS/USD con Ticker_Base inconsistente.');
+  } else {
+    ui.alert(
+      `🔧 Se corrigieron ${corregidas} ticker(s) en Equivalencias cuyo Ticker_Base no ` +
+      `coincidía con el de su par en pesos (quedaban como posiciones separadas en vez ` +
+      `de consolidarse en una sola).\n\n` +
+      `Corré "🔄 Actualizar Todo" ahora para recalcular Posiciones con esto corregido.\n\n` +
+      detalle.join('\n')
     );
   }
 }
@@ -2667,7 +2727,7 @@ function poblarEquivalencias() {
     ['AE38D','AE38','','Bono Soberano AE38 USD','USD','Renta Fija','Bono','Tesoro Nacional',''],
     ['AL30','AL30','','Bono Soberano AL30 (Ley Local)','ARS','Renta Fija','Bono','Tesoro Nacional',''],
     ['AL30D','AL30','','Bono Soberano AL30 USD','USD','Renta Fija','Bono','Tesoro Nacional',''],
-    ['AL29D','AL29D','','Bono Soberano AL29 USD','USD','Renta Fija','Bono','Tesoro Nacional',''],
+    ['AL29D','AL29','','Bono Soberano AL29 USD','USD','Renta Fija','Bono','Tesoro Nacional',''],
     ['AL35D','AL35D','','Bono Soberano AL35 USD','USD','Renta Fija','Bono','Tesoro Nacional',''],
     ['AMAT','AMAT','AMAT','Applied Materials Inc.','ARS','Renta Variable','CEDEAR','','NASDAQ'],
     ['AMATD','AMAT','AMAT','Applied Materials Inc. USD','USD','Renta Variable','CEDEAR','','NASDAQ'],

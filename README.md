@@ -87,6 +87,27 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.14 — fix posición fantasma: AL29 vendido seguía en Posiciones
+
+Se reportó que AL29 se vendió pero seguía apareciendo en `Posiciones`.
+Causa: `AL29D` (la versión USD del mismo bono) tenía su propio
+`Ticker_Base` (`'AL29D'`) en vez de apuntar a `'AL29'` — a diferencia de
+`AL30`/`AL30D`, que sí están correctamente vinculados con el mismo
+`Ticker_Base`. El script trata cada `Ticker_Base` como una posición
+separada: si la compra se registró bajo un ticker y la venta bajo el
+otro, cada uno queda con su propia cuenta y ninguno cierra la posición
+real — la pata que "compró" sigue mostrando cantidad, aunque en los
+hechos ya no queda nada.
+
+- Corregido en el script (`AL29D` ahora usa `Ticker_Base='AL29'`) — para
+  instalaciones nuevas.
+- Como el problema ya estaba cargado en las 3 planillas reales (Maki,
+  Frank, Trini — heredado de antes, no algo introducido en esta vuelta),
+  se agregó **🔧 Reparar Ticker_Base**: revisa TODOS los pares ARS/USD de
+  `Equivalencias` (no solo AL29D) y corrige en la planilla real
+  cualquiera con el mismo problema, antes de volver a correr
+  "Actualizar Todo".
+
 ## v3.13 — diagnóstico Valor Total vs IOL
 
 En la cuenta de Trini, "Activos valorizados en USD" en la web de IOL
