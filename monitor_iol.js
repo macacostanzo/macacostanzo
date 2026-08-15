@@ -1,8 +1,16 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.6                    ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.7                    ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.7:                                               ║
+ * ║  - _calcularSplitsPorTicker() también detecta splits que      ║
+ * ║    llegan como "Transferencia de Titulos IN" sin valor en     ║
+ * ║    efectivo sobre una posición existente (no solo "Pago de    ║
+ * ║    Dividendos"). Confirmado con BKNG: su ajuste de ratio de   ║
+ * ║    CEDEAR entró como TRANSF_IN, no como dividendo, y por eso  ║
+ * ║    v3.4-v3.6 no lo ajustaban — quedaba atrapado solo por el   ║
+ * ║    filtro genérico de "caída >40%, verificar".                ║
  * ║  CAMBIOS v3.6:                                               ║
  * ║  - /api/operaciones NO trae depósitos/extracciones (son       ║
  * ║    movimientos de cuenta, no operaciones de mercado) — por    ║
@@ -947,7 +955,19 @@ function _calcularSplitsPorTicker(movs) {
       const cantAbs = Math.abs(m.cantidad || 0);
       const montoAbs = Math.abs(m.montoUSD || 0);
 
-      if (['COMPRA', 'SUSCRIPCION_FCI', 'TRANSF_IN'].includes(m.tipo)) {
+      if (['COMPRA', 'SUSCRIPCION_FCI'].includes(m.tipo)) {
+        cantidadAcumulada += cantAbs;
+
+      } else if (m.tipo === 'TRANSF_IN') {
+        // Una "Transferencia de Titulos IN" sin valor en efectivo, sobre
+        // una posición que ya existía, casi siempre es un ajuste de ratio
+        // de CEDEAR (splits en el subyacente que IOL resuelve así, no como
+        // "Pago de Dividendos") — típico en CEDEARs de ratio muy alto como
+        // BKNG. Si viene con monto real, es una transferencia de custodia
+        // genuina y se trata como una compra más (como antes).
+        if (cantAbs > 0 && montoAbs < 0.01 && cantidadAcumulada > 0) {
+          splits.push({ fecha: m.fecha, ratio: (cantidadAcumulada + cantAbs) / cantidadAcumulada });
+        }
         cantidadAcumulada += cantAbs;
 
       } else if (['VENTA', 'RESCATE_FCI', 'TRANSF_OUT'].includes(m.tipo)) {

@@ -87,6 +87,21 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.7 — splits que llegan como Transferencia, no como Dividendo
+
+Con datos reales apareció un caso concreto: el ajuste de ratio de CEDEAR de
+BKNG (ratio 700:1, uno de los más altos) entró en `Movimientos` como
+**"Transferencia de Titulos IN"** con cantidad grande y monto $0 — no como
+"Pago de Dividendos", que era lo único que `_calcularSplitsPorTicker()`
+sabía reconocer desde v3.4. Por eso BKNG seguía sin ajustarse y solo caía
+en el filtro genérico de "caída >40%, verificar split".
+
+- `_calcularSplitsPorTicker()` ahora también trata una `TRANSF_IN` sin
+  valor en efectivo (monto ≈ 0) **sobre una posición que ya existía** como
+  señal de split/ajuste de ratio, igual que ya hacía con "Pago de
+  Dividendos". Una `TRANSF_IN` con monto real (transferencia de custodia
+  genuina) se sigue tratando como una compra más, sin cambios.
+
 ## v3.5 — Reentrada restringida a Renta Variable
 
 Con datos reales apareció el motivo por el que ni el ajuste de split de v3.4
