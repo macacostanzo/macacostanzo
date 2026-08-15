@@ -87,6 +87,27 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.10 — saldo disponible: fix de fallo silencioso + tildes
+
+En la planilla de Trini, "Actualizar Todo" no trajo saldo disponible ni en
+ARS ni en USD, y no se vio ningún error. Dos causas posibles y arregladas:
+
+- `actualizarTodo()` tragaba en silencio cualquier fallo de
+  `_actualizarSaldoIOL()` — solo quedaba en el log de ejecuciones, nunca
+  se veía en el resumen final. Ahora el resumen avisa explícitamente
+  cuando el saldo no se pudo traer, o cuando se trajo pero dio $0 en
+  ambas monedas (que puede ser real, pero ahora se dice en vez de
+  quedar en blanco sin explicación).
+- La comparación de moneda (`moneda.includes('dolar')`) no ignoraba
+  tildes — si la API devuelve "dólar" con acento para alguna cuenta,
+  nunca hubiera matcheado y esa cuenta se sumaría como ARS en vez de
+  USD (o quedaría afuera del todo). Ahora se normalizan tildes antes
+  de comparar.
+- Nuevo menú **🔍 Diagnóstico: Saldo IOL**: muestra cada cuenta con su
+  moneda cruda tal como la devuelve la API, cómo se interpretó, y el
+  disponible — para confirmar de un vistazo si el problema era real
+  (nada en efectivo) o de parseo.
+
 ## v3.9 — Equivalencias/Ratios unificadas entre las 3 planillas
 
 Se pidió revisar entre todos los monitores (Maki, Frank, Trini) qué

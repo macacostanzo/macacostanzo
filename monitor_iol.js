@@ -1,8 +1,21 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.9                    ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.10                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.10:                                               ║
+ * ║  - Fix: si _actualizarSaldoIOL() fallaba (o daba $0 en ambas   ║
+ * ║    monedas), actualizarTodo() lo tragaba en silencio — solo   ║
+ * ║    quedaba en el log de ejecuciones. Ahora se avisa en el      ║
+ * ║    resumen final ("⚠️ Saldo: no se pudo actualizar / revisar   ║
+ * ║    si no es real").                                            ║
+ * ║  - Fix: comparación de moneda ("dólar" vs "dolar") ahora       ║
+ * ║    ignora tildes — una cuenta en USD con el acento en la       ║
+ * ║    respuesta de la API podía no sumarse nunca al saldo.        ║
+ * ║  - Nuevo menú "🔍 Diagnóstico: Saldo IOL": muestra cada cuenta  ║
+ * ║    de /api/v2/estadocuenta con su moneda cruda, cómo se        ║
+ * ║    interpretó (ARS/USD) y el disponible, para separar "no hay  ║
+ * ║    nada en efectivo" (real) de "algo no matchea" (bug).        ║
  * ║  CAMBIOS v3.9:                                               ║
  * ║  - poblarEquivalencias()/poblarRatios() unifican lo que ya    ║
  * ║    estaba cargado a mano en las planillas de Maki, Frank y    ║
@@ -202,6 +215,7 @@ function onOpen() {
     .addItem('⚙️ Inicializar Hojas',         'inicializarHojas')
     .addItem('🎛️ Ver/Editar Config (targets y riesgo)', 'abrirConfig')
     .addItem('⚙️ Diagnostico',         'diagnosticarPosiciones')
+    .addItem('🔍 Diagnóstico: Saldo IOL', 'diagnosticarSaldoIOL')
     .addItem('🔍 Diagnóstico: Movimientos de Cuenta (depósitos/extracciones)', 'diagnosticarMovimientosCuenta')
     .addItem('🔍 Tickers Pendientes',  'verTickersPendientes')
     .addItem('🎯 Generar Radar', 'generarRadar')
@@ -620,7 +634,11 @@ function _actualizarSaldoIOL() {
 
     if (Array.isArray(data.cuentas)) {
       data.cuentas.forEach(cuenta => {
-        const moneda = String(cuenta.moneda || '').toLowerCase();
+        // Sin tildes antes de comparar — "dólar" con acento no matcheaba
+        // "dolar" y podía dejar cuentas en USD sin sumar.
+        const moneda = String(cuenta.moneda || '')
+          .toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         const disp   = parseFloat(cuenta.disponible || 0);
         if (moneda.includes('dolar')) {
           saldoUSD += disp;
@@ -757,9 +775,19 @@ try {
     let saldoInfo = '';
     try {
       const saldo = _actualizarSaldoIOL();
-      saldoInfo   = `\nSaldo: USD ${saldo.usd.toFixed(2)} | ARS ${saldo.ars.toLocaleString('es-AR')}`;
+      if (saldo.usd > 0 || saldo.ars > 0) {
+        saldoInfo = `\nSaldo: USD ${saldo.usd.toFixed(2)} | ARS ${saldo.ars.toLocaleString('es-AR')}`;
+      } else {
+        // Se pudo consultar pero dio $0 en ambas monedas — puede ser real
+        // (nada en efectivo) o una cuenta con un formato de "moneda" que
+        // no matchea el parseo. Se avisa en vez de quedar en silencio.
+        saldoInfo = '\n⚠️ Saldo: USD 0.00 | ARS 0 (revisar con 🔍 Diagnóstico: Saldo IOL si no es real)';
+      }
     } catch(e) {
+      // Antes esto quedaba solo en el log de ejecuciones y nadie se
+      // enteraba — ahora se avisa en el resumen final.
       Logger.log('Saldo IOL no disponible: ' + e.message);
+      saldoInfo = '\n⚠️ Saldo: no se pudo actualizar (' + e.message.substring(0, 100) + ')';
     }
 
     // 4. Procesar y calcular posiciones
@@ -2906,6 +2934,41 @@ datos.slice(1).forEach(fila => {
   }
 }
 
+
+// ─────────────────────────────────────────────
+// DIAGNÓSTICO — SALDO IOL
+// Si "Actualizar Todo" no trae saldo disponible (ni ARS ni USD), esto
+// muestra la respuesta cruda de /api/v2/estadocuenta y cómo la está
+// interpretando _actualizarSaldoIOL(), para distinguir entre "no hay
+// nada en efectivo" (real) y "algo no matchea al parsear" (bug).
+// ─────────────────────────────────────────────
+function diagnosticarSaldoIOL() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const data = _fetchIOL('/api/v2/estadocuenta');
+    const cuentas = Array.isArray(data.cuentas) ? data.cuentas : [];
+
+    let saldoUSD = 0, saldoARS = 0;
+    const detalle = cuentas.map(cuenta => {
+      const monedaOriginal = String(cuenta.moneda || '');
+      const monedaNorm = monedaOriginal.toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const disp = parseFloat(cuenta.disponible || 0);
+      const esUSD = monedaNorm.includes('dolar');
+      if (esUSD) saldoUSD += disp; else saldoARS += disp;
+      return `  número: ${cuenta.numero} | tipo: ${cuenta.tipo} | moneda: "${monedaOriginal}" → interpretado como ${esUSD ? 'USD' : 'ARS'} | disponible: ${disp}`;
+    }).join('\n');
+
+    const mensaje =
+      `Cuentas encontradas: ${cuentas.length}\n\n${detalle}\n\n` +
+      `TOTAL interpretado → USD: ${saldoUSD.toFixed(2)} | ARS: ${saldoARS.toFixed(2)}`;
+
+    Logger.log(mensaje);
+    ui.alert('🔍 Diagnóstico: Saldo IOL\n\n' + mensaje.substring(0, 1500));
+  } catch(e) {
+    ui.alert('❌ Error consultando /api/v2/estadocuenta: ' + e.message);
+  }
+}
 
 // ─────────────────────────────────────────────
 // DIAGNÓSTICO — MOVIMIENTOS DE CUENTA (depósitos/extracciones)
