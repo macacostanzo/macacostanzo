@@ -1,8 +1,15 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.8                    ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.9                    ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.9:                                               ║
+ * ║  - poblarEquivalencias()/poblarRatios() unifican lo que ya    ║
+ * ║    estaba cargado a mano en las planillas de Maki, Frank y    ║
+ * ║    Trini: 273 tickers en Equivalencias (antes 184) y 104 en   ║
+ * ║    Ratios_CEDEAR (antes 89). Menos tickers van a caer en      ║
+ * ║    "⚠️ COMPLETAR" al usar el mismo script en cualquiera de     ║
+ * ║    las tres planillas (o una nueva).                          ║
  * ║  CAMBIOS v3.8:                                               ║
  * ║  - Nueva hoja "Detalle_Compras": una fila por cada compra      ║
  * ║    individual (no por ticker) de las posiciones abiertas, con ║
@@ -2654,6 +2661,96 @@ function poblarEquivalencias() {
     ['YMCXD','YMCXO','','ON YMC serie X USD','USD','Renta Fija','ON','YMC S.A.',''],
     ['YPFD','YPFD','','YPF S.A.','ARS','Renta Variable','Accion','',''],
     ['ZM','ZM','ZM','Zoom Video Communications','ARS','Renta Variable','CEDEAR','','NASDAQ'],
+    // ── Agregado automáticamente: unión de Equivalencias de Maki/Frank/Trini ──
+    ['AL29','AL29','','Bono Soberano AL29','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['ALUA','ALUA','','Aluar Aluminio','ARS','Renta Variable','Accion','',''],
+    ['AUY','AUY','AUY','Yamana Gold (fusionada con PAAS)','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['AVGO','AVGO','AVGO','Broadcom Inc.','ARS','Renta Variable','CEDEAR','','NASDAQ'],
+    ['BABAD','BABA','BABA','Alibaba Group (USD)','USD','Renta Variable','CEDEAR','','NYSE'],
+    ['BB','BB','BB','BlackBerry Ltd.','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['BBAR','BBAR','','Banco Francés (BBVA)','ARS','Renta Variable','Accion','',''],
+    ['BBD','BBD','BBD','Banco Bradesco ADR','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['BBDD','BBD','BBD','Banco Bradesco ADR (USD)','USD','Renta Variable','CEDEAR','','NYSE'],
+    ['BDC24','BDC24','','Bono Dual BDC24','USD','Renta Fija','Bono','Tesoro Nacional',''],
+    ['BIOX','BIOX','BIOX','Bioceres Crop Solutions','ARS','Renta Variable','CEDEAR','','NASDAQ'],
+    ['BP','BP','BP','BP PLC-Spons ADR','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['BPA7D','BPOA7','','BOPREAL Serie 1A 2027 USD','USD','Renta Fija','Bono','BCRA',''],
+    ['BPB7D','BPOB7','','BOPREAL Serie 1B 2027 USD','USD','Renta Fija','Bono','BCRA',''],
+    ['BPC7D','BPOC7','','BOPREAL Serie 1C 2027 USD','USD','Renta Fija','Bono','BCRA',''],
+    ['BPD','BP','BP','BP PLC (USD)','USD','Renta Variable','CEDEAR','','NYSE'],
+    ['BPO27','BPO27','','BOPREAL Serie 1 - 2027 (BCRA)','ARS','Renta Fija','Bono','BCRA',''],
+    ['BPY6D','BPY6','','BOPREAL Serie 3-D 2026 (BCRA)','USD','Renta Fija','Bono','BCRA',''],
+    ['BYMAD','BYMA','','BYMA - Bolsas y Mercados Argentinos','USD','Renta Variable','Accion','',''],
+    ['CAT','CAT','CAT','Caterpillar Inc.','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['CATD','CAT','CAT','Caterpillar Inc.','USD','Renta Variable','CEDEAR','','NYSE'],
+    ['CEPU','CEPU','','Central Puerto','ARS','Renta Variable','Accion','',''],
+    ['CNXPOPA','CNXPOPA','','FCI Consultatio Pesos','ARS','Renta Mixta','FCI','',''],
+    ['CONIOLA','CONIOLA','','FCI Adcap IOL Acciones Argentina Clase A','ARS','Renta Mixta','FCI','Adcap',''],
+    ['COPXD','COPX','COPX','Global X Copper Miners ETF','USD','Renta Variable','ETF','','NYSEARCA'],
+    ['COST','COST','COST','Costco Wholesale','ARS','Renta Variable','CEDEAR','','NASDAQ'],
+    ['CRES','CRES','','Cresud S.A.C.I.F. y A.','ARS','Renta Variable','Accion','',''],
+    ['CRTAFAA','CRTAFAA','','FCI Adcap Renta Fija Argentina Clase A','ARS','Renta Mixta','FCI','Adcap',''],
+    ['CSCO','CSCO','CSCO','Cisco Systems','ARS','Renta Variable','CEDEAR','','NASDAQ'],
+    ['CVX','CVX','CVX','Chevron Corp.','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['DICP','DICP','','Discount Pesos CER','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['DISND','DISN','DIS','The Walt Disney Co.','USD','Renta Variable','CEDEAR','','NYSE'],
+    ['DNC3D','DNC3O','','ON Edenor Clase 3 USD','USD','Renta Fija','ON','Edenor',''],
+    ['DNC5D','DNC5O','','ON Edenor Clase 5 USD','USD','Renta Fija','ON','Edenor',''],
+    ['EEMD','EEM','EEM','iShares MSCI Emerging','USD','Renta Variable','ETF','','NYSEARCA'],
+    ['FCX','FCX','FCX','Freeport-McMoRan','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['GAMI','GAMI','','CEDEAR GAMI (verificar ticker NYSE)','ARS','Renta Variable','CEDEAR','',''],
+    ['GD30D','GD30','','Global 2030 USD','USD','Renta Fija','Bono','Tesoro Nacional',''],
+    ['GD35D','GD35','','Global 2035 USD','USD','Renta Fija','Bono','Tesoro Nacional',''],
+    ['GD38D','GD38','','Global 2038 USD','USD','Renta Fija','Bono','Tesoro Nacional',''],
+    ['GDX','GDX','GDX','VanEck Gold Miners','ARS','Renta Variable','ETF','','NYSE'],
+    ['GGAL','GGAL','','Grupo Galicia','ARS','Renta Variable','Accion','',''],
+    ['GLD','GLD','GLD','SPDR Gold Trust','ARS','Renta Variable','ETF','','NYSE'],
+    ['GS','GS','GS','Goldman Sachs','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['HMY','HMY','HMY','Harmony Gold Mining','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['INTCD','INTC','INTC','Intel Corp. (USD)','USD','Renta Variable','CEDEAR','','NASDAQ'],
+    ['ITUB','ITUB','ITUB','Itaú Unibanco','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['IVV','IVV','IVV','iShares Core S&P 500','ARS','Renta Variable','ETF','','NYSE'],
+    ['IWM','IWM','IWM','iShares Russell 2000','ARS','Renta Variable','ETF','','NYSE'],
+    ['JPM','JPM','JPM','JPMorgan Chase','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['JPMD','JPM','JPM','JPMorgan Chase  (USD)','USD','Renta Variable','CEDEAR','','NYSE'],
+    ['LEDE','LEDE','','Ledesma S.A.','ARS','Renta Variable','Accion','',''],
+    ['LOMA','LOMA','','Loma Negra C.I.A.S.A.','ARS','Renta Variable','Accion','',''],
+    ['MA','MA','MA','Mastercard Inc.','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['MIRG','MIRG','','Mirgor S.A.','ARS','Renta Variable','Accion','',''],
+    ['MRCAO','MRCAO','','ON MRCA serie O ARS','ARS','Renta Fija','ON','Mastellone',''],
+    ['OXY','OXY','OXY','Occidental Petroleum','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['PAMPD','PAMP','','Pampa Energía','USD','Renta Variable','Accion','',''],
+    ['PARP','PARP','','Par Pesos (Ley Local)','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['PBA25','PBA25','','Bono Provincia Buenos Aires 2025','USD','Renta Fija','Bono','Pcia. Buenos Aires',''],
+    ['PBY22','PBY22','','Bono PBY22','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['QQQD','QQQ','QQQ','Invesco QQQ Trust','USD','Renta Variable','ETF','','NASDAQ'],
+    ['RUCDO','RUCDO','','ON MSU Energy Clase 12 USD','USD','Renta Fija','ON','MSU Energy',''],
+    ['SUPV','SUPV','','Banco Supervielle','ARS','Renta Variable','Accion','',''],
+    ['T2X3','T2X3','','Bono CER T2X3','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['T2X4','T2X4','','Bono CER T2X4','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['TD','T','T','AT&T Inc.','USD','Renta Variable','CEDEAR','','NYSE'],
+    ['TECO2','TECO2','','Telecom Argentina S.A.','ARS','Renta Variable','Accion','',''],
+    ['TGT','TGT','TGT','Target Corp.','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['TLCPD','TLCPO','','ON Telecom serie PO','ARS','Renta Fija','ON','Telecom Argentina',''],
+    ['TLCPO','TLCPO','','ON Telecom serie PO','ARS','Renta Fija','ON','Telecom Argentina',''],
+    ['TMD','TM','TM','Toyota Motor Corp.','USD','Renta Variable','CEDEAR','','NYSE'],
+    ['TO23','TO23','','Bono TO23','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['TO26','TO26','','Bono TO26','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['TRIP','TRIP','TRIP','Tripadvisor Inc.','ARS','Renta Variable','CEDEAR','','NASDAQ'],
+    ['TV22','TV22','','Bono TV22 (Dólar linked)','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['TV24','TV24','','Bono TV24 (Dólar linked)','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['TX22','TX22','','Bono CER TX22','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['TX23','TX23','','Bono CER TX23','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['TX24','TX24','','Bono CER TX24','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['TX26','TX26','','Bono CER TX26','ARS','Renta Fija','Bono','Tesoro Nacional',''],
+    ['TXAR','TXAR','','Ternium Argentina','ARS','Renta Variable','Accion','',''],
+    ['UBERD','UBER','UBER','Uber Technologies','USD','Renta Variable','CEDEAR','','NYSE'],
+    ['WBA','WBA','WBA','Walgreens Boots Alliance','ARS','Renta Variable','CEDEAR','','NASDAQ'],
+    ['WBAD','WBA','WBA','Walgreens Boots Alliance (USD)','USD','Renta Variable','CEDEAR','','NASDAQ'],
+    ['XYZ','XYZ','XYZ','Block Inc. (ex-Square)','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['YMCHD','YMCHO','','ON YMC serie H','USD','Renta Fija','ON','YMC S.A.',''],
+    ['YMCHO','YMCHO','','ON YMC serie H ARS','ARS','Renta Fija','ON','YMC S.A.',''],
+    ['ZMD','ZM','ZM','Zoom Video (USD)','USD','Renta Variable','CEDEAR','','NASDAQ'],
   ];
 
   const existentes = new Set(
@@ -2691,6 +2788,22 @@ function poblarRatios() {
     ['DISN',12,1],['F',1,1],['RIO',8,1],['SPOT',28,1],['T',4,1],
     ['TXN',10,1],['ASML',44,1],['CAT',12,1],['AUY',3,1],['HMY',2,1],
     ['VIST',2,1],['SPGI',33,1],['AXP',10,1],['IBIT',5,1],['AMAT',5,1],
+    // ── Agregado automáticamente: unión de Ratios_CEDEAR de Maki/Frank/Trini ──
+    ['AAL',2,1],
+    ['ABEV',1,3],
+    ['BBD',1,1],
+    ['BP',5,1],
+    ['DAL',8,1],
+    ['EFA',18,1],
+    ['GM',6,1],
+    ['IVV',692,1],
+    ['MO',4,1],
+    ['NEM',3,1],
+    ['PAAS',3,1],
+    ['SNOW',30,1],
+    ['UAL',5,1],
+    ['VEA',10,1],
+    ['WBA',3,1],
   ];
 
   const existentes = new Set(

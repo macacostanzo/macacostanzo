@@ -87,6 +87,31 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.9 — Equivalencias/Ratios unificadas entre las 3 planillas
+
+Se pidió revisar entre todos los monitores (Maki, Frank, Trini) qué
+tickers ya estaban clasificados a mano en cada uno y que el script no
+traía de fábrica.
+
+- Se compararon las hojas `Equivalencias` y `Ratios_CEDEAR` reales de las
+  3 planillas contra los arrays hardcodeados de `poblarEquivalencias()` /
+  `poblarRatios()`.
+- **Equivalencias**: 184 → 273 tickers (+89). Se excluyó un typo real
+  encontrado en una de las planillas (`MSFDT`, duplicado de `MSFTD` ya
+  presente) y se corrigió una inconsistencia de moneda (`RUCDO` decía
+  "USD" en el nombre pero tenía ARS cargado).
+- **Ratios_CEDEAR**: 89 → 104 tickers (+15). Se excluyeron 4 entradas
+  duplicadas cargadas bajo el ticker USD en vez del ticker base (`BRKBD`,
+  `GOGLD`, `MSFTD`, `NUD` — ya estaban bien como `BRKB`, `GOOGL`, `MSFT`,
+  `NU`, y bajo la clave equivocada nunca se hubiesen usado).
+- Sin duplicados dentro de cada array (verificado). Como
+  `poblarEquivalencias()`/`poblarRatios()` ya solo agregan lo que falta
+  en la hoja real (no pisan nada existente), correr "Inicializar Hojas"
+  de nuevo en cualquiera de las 3 planillas es seguro.
+- No se pudo revisar una segunda copia de "Monitor IOL Trini" que
+  apareció en la búsqueda de Drive — el archivo ya no es accesible
+  (borrado o movido).
+
 ## v3.8 — hoja Detalle_Compras (precio de cada compra vs actual)
 
 Pediste de vuelta algo que tenías en monitores anteriores: una pestaña con
