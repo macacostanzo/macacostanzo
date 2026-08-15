@@ -1,8 +1,21 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.10                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.11                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.11:                                               ║
+ * ║  - Fix importante: importarMovimientosIOL() detectaba "es USD" ║
+ * ║    solo por el sufijo " US$" (Pago de Renta/Dividendos). Una   ║
+ * ║    Compra/Venta de un CEDEAR cuyo propio ticker ya es la       ║
+ * ║    versión USD (GOGLD, IBITD, METAD, ...) quedaba etiquetada   ║
+ * ║    "Inversion Argentina Pesos" por error, y el precio (ya en   ║
+ * ║    USD) se terminaba dividiendo por el MEP de nuevo → precios  ║
+ * ║    absurdamente bajos y variaciones % exageradas. Ahora cruza  ║
+ * ║    contra Equivalencias (moneda) además del sufijo.            ║
+ * ║  - Nuevo menú "🔧 Reparar Tipo Cuenta": corrige en la hoja      ║
+ * ║    Movimientos las filas ya importadas con este problema, sin  ║
+ * ║    tocar el precio/monto (que ya estaba bien) — solo la        ║
+ * ║    etiqueta de moneda.                                         ║
  * ║  CAMBIOS v3.10:                                               ║
  * ║  - Fix: si _actualizarSaldoIOL() fallaba (o daba $0 en ambas   ║
  * ║    monedas), actualizarTodo() lo tragaba en silencio — solo   ║
@@ -215,6 +228,7 @@ function onOpen() {
     .addItem('⚙️ Inicializar Hojas',         'inicializarHojas')
     .addItem('🎛️ Ver/Editar Config (targets y riesgo)', 'abrirConfig')
     .addItem('⚙️ Diagnostico',         'diagnosticarPosiciones')
+    .addItem('🔧 Reparar Tipo Cuenta (precios USD mal etiquetados)', 'repararTipoCuentaMovimientos')
     .addItem('🔍 Diagnóstico: Saldo IOL', 'diagnosticarSaldoIOL')
     .addItem('🔍 Diagnóstico: Movimientos de Cuenta (depósitos/extracciones)', 'diagnosticarMovimientosCuenta')
     .addItem('🔍 Tickers Pendientes',  'verTickersPendientes')
@@ -519,6 +533,7 @@ datos.slice(1).forEach(fila => {
   // Convertir al formato de la hoja Movimientos
   const nuevasFilas = [];
   const mepActual   = _getMEPActual();
+  const eqMap       = _cargarEquivalencias();
 
   operaciones.forEach(op => {
     // Solo terminadas
@@ -527,9 +542,16 @@ datos.slice(1).forEach(fila => {
     const nroMov = String(op.numero || '').trim();
     if (!nroMov || nrosMov.has(nroMov)) return;
 
-    const simbolo  = String(op.simbolo || '').trim();
-    const esUSD    = simbolo.endsWith(' US$');
-    const ticker   = simbolo.replace(/ US\$$/, '').trim();
+    const simbolo      = String(op.simbolo || '').trim();
+    const esUSDSufijo   = simbolo.endsWith(' US$');
+    const ticker        = simbolo.replace(/ US\$$/, '').trim();
+    // El sufijo " US$" solo aparece en Pago de Renta/Dividendos. Muchos
+    // CEDEARs tienen su propia versión USD con el ticker terminado en D
+    // (GOGLD, IBITD, METAD, ...) y ahí NO hay sufijo — sin este cruce
+    // contra Equivalencias, una Compra/Venta de esos quedaba marcada
+    // "Inversion Argentina Pesos" y el precio (que ya estaba en USD)
+    // terminaba dividido por el MEP de nuevo, dando un precio absurdo.
+    const esUSD = esUSDSufijo || (eqMap[ticker] && eqMap[ticker].moneda === 'USD');
 
     // Construir tipo en formato que ya parsea _parseTipo
     let tipoMov = '';
@@ -587,6 +609,75 @@ datos.slice(1).forEach(fila => {
   }
 
   return nuevasFilas.length;
+}
+
+// ─────────────────────────────────────────────
+// REPARAR "TIPO CUENTA" MAL ETIQUETADO EN MOVIMIENTOS YA IMPORTADOS
+// Corrige filas que quedaron con "Inversion Argentina Pesos" para un
+// ticker cuya moneda real es USD (según Equivalencias) — el bug de
+// importarMovimientosIOL() que hacía esto ya está arreglado para
+// importaciones nuevas, pero esto corrige lo que ya se cargó antes.
+// Solo toca la etiqueta de moneda; el precio/monto que trajo la API no
+// se toca (ya estaba bien, era la etiqueta la que confundía a
+// procesarMovimientos() y hacía dividir por el MEP un precio que ya
+// estaba en USD).
+// ─────────────────────────────────────────────
+function repararTipoCuentaMovimientos() {
+  const ui   = SpreadsheetApp.getUi();
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetMov = ss.getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sheetMov) { ui.alert('No existe la hoja "Movimientos".'); return; }
+
+  const eqMap = _cargarEquivalencias();
+  const datos = sheetMov.getDataRange().getValues();
+
+  let hFila = 0;
+  for (let i = 0; i < Math.min(datos.length, 10); i++) {
+    const filaStr = datos[i].map(c => String(c)).join('|');
+    if (filaStr.includes('Nro') && filaStr.includes('Tipo Mov')) { hFila = i; break; }
+  }
+
+  const headers = datos[hFila].map(h => String(h).trim());
+  const col = (prefijo) => headers.findIndex(h => h.startsWith(prefijo));
+  const C = { tipo: col('Tipo Mov'), cuenta: col('Tipo Cuenta') };
+  if (C.tipo === -1 || C.cuenta === -1) {
+    ui.alert('No se encontraron las columnas "Tipo Mov." / "Tipo Cuenta" en Movimientos.');
+    return;
+  }
+
+  let corregidas = 0;
+  const detalle = [];
+  for (let i = hFila + 1; i < datos.length; i++) {
+    const tipoRaw = String(datos[i][C.tipo] || '');
+    if (!tipoRaw) continue;
+
+    const { ticker } = _parseTipo(tipoRaw);
+    if (!ticker) continue;
+
+    const eq = eqMap[ticker];
+    if (!eq || eq.moneda !== 'USD') continue; // no es un ticker de moneda USD conocido
+
+    const cuentaActual = String(datos[i][C.cuenta] || '');
+    const yaEsUSD = cuentaActual.includes('Dolares') || cuentaActual.includes('Dólares');
+    if (yaEsUSD) continue; // ya está bien etiquetado
+
+    sheetMov.getRange(i + 1, C.cuenta + 1).setValue('Inversion Argentina Dolares');
+    corregidas++;
+    if (detalle.length < 30) detalle.push(`Fila ${i + 1}: ${tipoRaw}`);
+  }
+
+  if (corregidas === 0) {
+    ui.alert('✅ No se encontró ningún movimiento con "Tipo Cuenta" mal etiquetado.');
+  } else {
+    ui.alert(
+      `🔧 Se corrigieron ${corregidas} movimiento(s) que decían "Inversion Argentina ` +
+      `Pesos" siendo de un ticker en USD (bug de importarMovimientosIOL en tickers ` +
+      `terminados en D sin sufijo " US$", como GOGLD/IBITD).\n\n` +
+      `Corré "🔄 Actualizar Todo" ahora para recalcular todo con los precios correctos.\n\n` +
+      `Ejemplos corregidos:\n` + detalle.join('\n') +
+      (corregidas > detalle.length ? `\n... y ${corregidas - detalle.length} más.` : '')
+    );
+  }
 }
 
 // ─────────────────────────────────────────────

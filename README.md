@@ -87,6 +87,33 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.11 — fix importante: precios de CEDEARs USD divididos por MEP dos veces
+
+Se reportaron precios absurdamente bajos y variaciones % exageradas en
+registros de julio de GOOGL (GOGLD) e IBIT (IBITD). Causa real encontrada:
+
+`importarMovimientosIOL()` detectaba si una operación era en USD **solo**
+por el sufijo `" US$"` en el símbolo — eso únicamente aparece en Pago de
+Renta/Dividendos (ej. `"AXP US$"`). Una Compra/Venta normal de un CEDEAR
+cuyo propio ticker YA es la versión dólar (GOGLD, IBITD, METAD, y
+cualquier otro terminado en D) no tiene ese sufijo — el símbolo es
+literalmente `"GOGLD"`, sin `" US$"` al final. Sin ese sufijo, la
+operación quedaba marcada `"Inversion Argentina Pesos"` aunque el precio
+que trae la API ya está en USD. Después, `procesarMovimientos()` ve una
+operación "en pesos" y divide ese precio por el MEP **de nuevo** — un
+precio que ya era, por ejemplo, USD 5,75 termina en algo como USD 0,0038.
+
+- `importarMovimientosIOL()` ahora también cruza contra `Equivalencias`
+  (columna Moneda_Op) para decidir si una operación es en USD, no solo el
+  sufijo del símbolo. Afecta a cualquier importación **nueva** desde acá
+  en adelante.
+- Nuevo menú **🔧 Reparar Tipo Cuenta**: recorre `Movimientos` y corrige
+  las filas que ya se importaron mal (dicen "Pesos" pero el ticker es de
+  moneda USD según Equivalencias) — cambia solo la etiqueta de cuenta, no
+  toca precio/monto/cantidad (esos ya estaban bien). Después de correrlo,
+  hay que volver a correr "🔄 Actualizar Todo" para que todo se recalcule
+  con los precios correctos.
+
 ## v3.10 — saldo disponible: fix de fallo silencioso + tildes
 
 En la planilla de Trini, "Actualizar Todo" no trajo saldo disponible ni en
