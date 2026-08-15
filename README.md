@@ -87,6 +87,33 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.15 — sugerencia de inversión con el efectivo disponible
+
+Se pidió: sabiendo el dinero disponible, sugerir dónde invertirlo — como
+un asesor matriculado largo placista, basado en el valor de las empresas
+vs su precio actual, priorizando aumentar posiciones ya existentes.
+
+- Nueva sección en el **Radar**: "💡 Sugerencia de Inversión — ¿Dónde
+  poner el efectivo disponible?". Toma el "Total Disponible USD" real de
+  `Portfolio` (no una cifra teórica) y lo reparte:
+  1. **Por clase**: prioriza la clase con mayor hueco vs su target de
+     Config (Renta Variable/Fija/Mixta); si ninguna está por debajo del
+     target, reparte según los pesos target.
+  2. **Dentro de Renta Variable**: ordena las posiciones existentes por
+     "Prima/Desc %" — la misma columna que ya compara el precio del
+     CEDEAR contra su valor teórico real (precio en NYSE ÷ ratio) — y
+     prioriza las más baratas relativas a ese valor.
+  3. **Dentro de Renta Fija**: prioriza la mejor TIR actual entre los
+     bonos/ONs que ya tiene.
+  4. **Renta Mixta/FCI**: refuerza el que tiene menos peso relativo.
+- Nunca supera el techo de concentración por ticker de Config
+  (`Umbral Ticker Alerta`), ni pone más de un tercio del presupuesto de
+  una clase en un solo ticker.
+- A propósito **no propone tickers nuevos** — solo reparte entre lo que
+  ya está en la cartera. Si queda presupuesto sin asignar (por límite de
+  concentración, o porque no hay ninguna posición existente en esa
+  clase), lo dice explícitamente en vez de inventar una sugerencia.
+
 ## v3.14 — fix posición fantasma: AL29 vendido seguía en Posiciones
 
 Se reportó que AL29 se vendió pero seguía apareciendo en `Posiciones`.

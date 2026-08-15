@@ -1,8 +1,18 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.14                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.15                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.15:                                               ║
+ * ║  - Nueva sección en el Radar: "💡 Sugerencia de Inversión —    ║
+ * ║    ¿Dónde poner el efectivo disponible?". Reparte el efectivo  ║
+ * ║    real disponible (Portfolio) entre posiciones YA EXISTENTES  ║
+ * ║    (no propone tickers nuevos a propósito), priorizando el     ║
+ * ║    hueco más grande vs el target de asignación, y dentro de    ║
+ * ║    Renta Variable ordenando por Prima/Desc % vs el precio      ║
+ * ║    teórico (valor real vs precio actual) y en Renta Fija por   ║
+ * ║    TIR actual — sin superar el techo de concentración por      ║
+ * ║    ticker de Config.                                           ║
  * ║  CAMBIOS v3.14:                                               ║
  * ║  - Fix: AL29D tenía su propio Ticker_Base en vez de apuntar a  ║
  * ║    AL29 (a diferencia de AL30/AL30D, que sí están bien         ║
@@ -3430,7 +3440,7 @@ function generarRadar() {
 
   // Leer distribución actual y valor total desde Portfolio
   const port = ss.getSheetByName(HOJAS.PORTFOLIO);
-  let pctRV = 0, pctRF = 0, pctRM = 0, totalPortfolio = 0;
+  let pctRV = 0, pctRF = 0, pctRM = 0, totalPortfolio = 0, totalDisponible = 0;
   if (port) {
     const portData = port.getDataRange().getValues();
     portData.forEach(r => {
@@ -3440,6 +3450,7 @@ function generarRadar() {
       if (label === '% Renta Fija')            pctRF = val;
       if (label === '% Renta Mixta / FCI')     pctRM = val;
       if (label === 'TOTAL PORTFOLIO (USD)')   totalPortfolio = val;
+      if (label === 'Total Disponible USD')    totalDisponible = val;
     });
   }
 
@@ -3486,7 +3497,145 @@ function generarRadar() {
   f++;
 
   // ════════════════════════════════════════════════════════════
-  // SECCIÓN 2 — CONCENTRACIÓN DE RIESGO
+  // SECCIÓN 2 — SUGERENCIA DE INVERSIÓN (dinero disponible)
+  // Mirada de "asesor largo placista": priorizar sumar a lo que ya se
+  // tiene, comprando donde el precio está más lejos de su valor real
+  // (Prima/Desc % contra el teórico NYSE/ratio en Renta Variable, TIR
+  // actual en Renta Fija), sin superar los límites de concentración ni
+  // gastar más de lo que hay realmente disponible.
+  // ════════════════════════════════════════════════════════════
+  tit(f, '  💡  SUGERENCIA DE INVERSIÓN — ¿DÓNDE PONER EL EFECTIVO DISPONIBLE?');
+  f++;
+
+  if (totalDisponible <= 1) {
+    fila(f, [
+      'No hay efectivo disponible para sugerir (revisar "Efectivo Disponible" en Portfolio).',
+      '', '', ''
+    ], C.GRIS);
+    f++;
+  } else {
+    sheet.getRange(f, 1, 1, 4).merge()
+      .setValue(
+        `Con USD ${totalDisponible.toFixed(2)} disponibles: como inversora de largo plazo, ` +
+        `conviene priorizar sumar a lo que ya tenés antes que abrir posiciones nuevas — ` +
+        `comprando donde el precio está más lejos de su valor real, sin pasarte de tus ` +
+        `propios límites de concentración (hoja Config).`
+      )
+      .setFontStyle('italic').setFontColor('#666666').setWrap(true);
+    sheet.setRowHeight(f, 42);
+    f++;
+
+    sheet.getRange(f, 1, 1, 4).setValues([['Ticker', 'Clase', 'Motivo', 'Monto Sugerido']]);
+    subtit(f, 4);
+    f++;
+
+    // Reparte un presupuesto entre candidatos ya ordenados por prioridad,
+    // sin superar el techo de concentración (config.tickerAlerta) ni
+    // poner más de un tercio del presupuesto de esa clase en un solo
+    // ticker (para no concentrar todo en la primera oportunidad).
+    function _repartir(candidatos, presupuesto) {
+      const sugerencias = [];
+      let restante = presupuesto;
+      for (const c of candidatos) {
+        if (restante < 1) break;
+        const techo = totalPortfolio > 0 ? totalPortfolio * config.tickerAlerta : Infinity;
+        const espacio = Math.max(0, techo - (c.valorUSD || 0));
+        const monto = Math.min(restante, espacio, presupuesto / 3);
+        if (monto < 1) continue;
+        sugerencias.push({ ticker: c.ticker, motivo: c.motivo, monto });
+        restante -= monto;
+      }
+      return { sugerencias, restante };
+    }
+
+    // Candidatos Renta Variable: más barato vs precio teórico primero
+    const candRV = [];
+    for (let i = 1; i < posData.length; i++) {
+      if (String(posData[i][23] || '') !== 'Renta Variable') continue;
+      const ticker = String(posData[i][0] || '').trim();
+      const prima  = parseFloat(posData[i][18]);
+      const valorUSD = parseFloat(posData[i][6]) || 0;
+      if (!ticker || isNaN(prima)) continue; // sin precio teórico calculado, no se puede evaluar
+      candRV.push({
+        ticker, valorUSD,
+        prima,
+        motivo: `${prima <= 0 ? '🟢' : '🟡'} ${(prima * 100).toFixed(1)}% vs precio teórico (NYSE/ratio)`,
+      });
+    }
+    candRV.sort((a, b) => a.prima - b.prima);
+
+    // Candidatos Renta Fija: mejor TIR actual primero
+    const candRF = [];
+    for (let i = 1; i < posData.length; i++) {
+      if (String(posData[i][23] || '') !== 'Renta Fija') continue;
+      const ticker = String(posData[i][0] || '').trim();
+      const tir    = parseFloat(posData[i][12]);
+      const valorUSD = parseFloat(posData[i][6]) || 0;
+      if (!ticker || isNaN(tir)) continue;
+      candRF.push({ ticker, valorUSD, tir, motivo: `TIR actual ${(tir * 100).toFixed(2)}% — la mejor entre tus bonos/ONs` });
+    }
+    candRF.sort((a, b) => b.tir - a.tir);
+
+    // Candidatos Renta Mixta / FCI: reforzar el que menos peso relativo tiene
+    const candRM = [];
+    for (let i = 1; i < posData.length; i++) {
+      if (String(posData[i][23] || '') !== 'Renta Mixta') continue;
+      const ticker = String(posData[i][0] || '').trim();
+      const valorUSD = parseFloat(posData[i][6]) || 0;
+      if (!ticker) continue;
+      candRM.push({ ticker, valorUSD, motivo: 'Menor peso relativo entre tus FCI' });
+    }
+    candRM.sort((a, b) => a.valorUSD - b.valorUSD);
+
+    // Presupuesto por clase: prioriza la(s) clase(s) más lejos de su
+    // target; si ninguna está por debajo, reparte según los pesos target.
+    const gapRV = Math.max(0, config.targetRV - pctRV);
+    const gapRF = Math.max(0, config.targetRF - pctRF);
+    const gapRM = Math.max(0, config.targetRM - pctRM);
+    const gapTotal = gapRV + gapRF + gapRM;
+
+    const pesoRV = gapTotal > 0.001 ? gapRV / gapTotal : config.targetRV;
+    const pesoRF = gapTotal > 0.001 ? gapRF / gapTotal : config.targetRF;
+    const pesoRM = gapTotal > 0.001 ? gapRM / gapTotal : config.targetRM;
+
+    const { sugerencias: sugRV } = _repartir(candRV, totalDisponible * pesoRV);
+    const { sugerencias: sugRF } = _repartir(candRF, totalDisponible * pesoRF);
+    const { sugerencias: sugRM } = _repartir(candRM, totalDisponible * pesoRM);
+
+    const todas = [...sugRV, ...sugRF, ...sugRM];
+    if (todas.length === 0) {
+      fila(f, [
+        'Sin candidatos entre tus posiciones actuales con los datos disponibles ' +
+        '(revisá si tenés precio teórico calculado en Renta Variable, o TIR en Renta Fija).',
+        '', '', ''
+      ], C.GRIS);
+      f++;
+    } else {
+      todas.forEach(s => {
+        const clase = sugRV.includes(s) ? 'Renta Variable' : sugRF.includes(s) ? 'Renta Fija' : 'Renta Mixta';
+        fila(f, [s.ticker, clase, s.motivo, 'USD ' + s.monto.toFixed(2)], C.VERDE);
+        f++;
+      });
+
+      const totalSugerido = todas.reduce((sum, s) => sum + s.monto, 0);
+      const sinAsignar = totalDisponible - totalSugerido;
+      let notaSinAsignar = '';
+      if (sinAsignar > 1) {
+        notaSinAsignar = ` · Sin asignar: USD ${sinAsignar.toFixed(2)} — ` +
+          'por límite de concentración, o porque no tenés posición existente en esa clase ' +
+          '(esta sugerencia no propone tickers nuevos a propósito)';
+      }
+      sheet.getRange(f, 1, 1, 4).merge()
+        .setValue(`Total sugerido: USD ${totalSugerido.toFixed(2)} de USD ${totalDisponible.toFixed(2)} disponibles${notaSinAsignar}`)
+        .setFontWeight('bold').setWrap(true);
+      f++;
+    }
+  }
+
+  f++;
+
+  // ════════════════════════════════════════════════════════════
+  // SECCIÓN 3 — CONCENTRACIÓN DE RIESGO
   // ════════════════════════════════════════════════════════════
   tit(f, '  ⚠️  CONCENTRACIÓN DE RIESGO');
   f++;
@@ -3574,7 +3723,7 @@ function generarRadar() {
   f++;
 
   // ════════════════════════════════════════════════════════════
-  // SECCIÓN 3 — REENTRADA (-10% desde última operación)
+  // SECCIÓN 4 — REENTRADA (-10% desde última operación)
   // ════════════════════════════════════════════════════════════
   tit(f, '  🎯  OPORTUNIDADES DE REENTRADA — Renta Variable  (−10% desde última operación)');
   f++;
@@ -3711,7 +3860,7 @@ function generarRadar() {
   f++;
 
   // ════════════════════════════════════════════════════════════
-  // SECCIÓN 4 — ARBITRAJE ARS/USD
+  // SECCIÓN 5 — ARBITRAJE ARS/USD
   // ════════════════════════════════════════════════════════════
   tit(f, '  💱  ARBITRAJE ARS / USD  (prima o descuento > 1,5%)');
   f++;
@@ -3770,7 +3919,7 @@ function generarRadar() {
   f++;
 
   // ════════════════════════════════════════════════════════════
-  // SECCIÓN 5 — ALERTAS RENTA FIJA (TIR < objetivo de Config)
+  // SECCIÓN 6 — ALERTAS RENTA FIJA (TIR < objetivo de Config)
   // ════════════════════════════════════════════════════════════
   const tirObjetivoPct = (config.tirRFObjetivo * 100).toFixed(0);
   tit(f, `  📉  ALERTAS RENTA FIJA  (TIR actual < ${tirObjetivoPct}%)`);
