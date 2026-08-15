@@ -1,8 +1,15 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.15                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.16                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.16:                                               ║
+ * ║  - Fix: "Precio Prom USD" en Renta Fija quedaba en escala      ║
+ * ║    "dólares por unidad nominal" (ej. 0,955) mientras "Precio   ║
+ * ║    USD" (cotización en vivo) está en % del nominal (ej.        ║
+ * ║    95,5) — 100 veces distintas, no comparables a simple        ║
+ * ║    vista. Ahora Precio Prom también se expresa en % del        ║
+ * ║    nominal para Bonos/ONs.                                     ║
  * ║  CAMBIOS v3.15:                                               ║
  * ║  - Nueva sección en el Radar: "💡 Sugerencia de Inversión —    ║
  * ║    ¿Dónde poner el efectivo disponible?". Reparte el efectivo  ║
@@ -1691,8 +1698,16 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
   const baseRows = abiertas.map(pos => {
     const ratio      = ratiosMap[pos.tickerBase];
     const ratioStr   = ratio ? `${ratio.num}:${ratio.den}` : '';
-    const precioProm = pos.cantActual > 0 ? pos.costoActual / pos.cantActual : 0;
     const tickerUSD  = tickerUSDMap[pos.tickerBase] || '';
+    const esRF       = pos.tipoActivo === 'ON' || pos.tipoActivo === 'Bono';
+
+    // Precio Prom USD: en Renta Fija, costoActual/cantidad da dólares
+    // reales por unidad nominal (ej. 0,955) — pero "Precio USD" (la
+    // cotización en vivo) viene en % del nominal (ej. 95,5). Sin este
+    // ×100 quedaban en escalas distintas, 100 veces una de la otra.
+    const precioProm = pos.cantActual > 0
+      ? (esRF ? (pos.costoActual / pos.cantActual) * 100 : pos.costoActual / pos.cantActual)
+      : 0;
 
     // Precios desde API IOL
     const precioData = preciosIOL[pos.tickerBase] || {};
@@ -1700,7 +1715,6 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
     const precioARS  = precioData.precioARS || 0;
 
     // Valor actual USD
-    const esRF       = pos.tipoActivo === 'ON' || pos.tipoActivo === 'Bono';
     let   valorUSD   = 0;
     if (precioUSD > 0) {
       valorUSD = esRF

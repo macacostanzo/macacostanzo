@@ -87,6 +87,26 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.16 — fix escala de Precio Prom USD en Renta Fija
+
+Se reportó que en Renta Fija "Precio Prom USD" y "Precio USD" no eran
+comparables — uno multiplica por 100 (o más bien, no lo hacía) y el otro
+no. Causa real: `costoActual / cantidad` da dólares reales gastados por
+unidad nominal (ej. 0,955 para un bono comprado a 95,5% del nominal),
+pero "Precio USD" (la cotización en vivo) viene en % del nominal
+directamente (ej. 95,5) — 100 veces distintas.
+
+- `_escribirPosiciones()` ahora multiplica por 100 el "Precio Prom USD"
+  para Bonos/ONs, quedando en la misma escala que "Precio USD" y
+  comparable a simple vista.
+- Se revisaron todos los demás usos de la distinción Renta Fija (`esRF`)
+  en el script (Valor Actual en Posiciones, Renta_Fija, Detalle_Compras)
+  y ya estaban bien escalados — este era el único lugar con el problema.
+- La TIR de Renta Fija en 88% que se reportó junto con esto **no** viene
+  de este bug (el cálculo de TIR usa costoActual/valorUSD, que ya estaban
+  bien escalados) — queda pendiente identificar el ticker puntual para
+  revisar su historial de movimientos.
+
 ## v3.15 — sugerencia de inversión con el efectivo disponible
 
 Se pidió: sabiendo el dinero disponible, sugerir dónde invertirlo — como
