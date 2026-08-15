@@ -1,8 +1,16 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.12                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.13                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.13:                                               ║
+ * ║  - Nuevo menú "🔍 Diagnóstico: Valor Total vs IOL": compara el  ║
+ * ║    "Valor Actual" que calcula el sheet (suma cantidad×precio   ║
+ * ║    de cada posición) contra el total oficial que informa la    ║
+ * ║    propia API de IOL (titulosValorizados en                    ║
+ * ║    /api/v2/estadocuenta) — para acotar rápido si hay un error  ║
+ * ║    de valuación en algún lado (precio, split, clasificación)   ║
+ * ║    sin tener que revisar posición por posición.                ║
  * ║  CAMBIOS v3.12:                                               ║
  * ║  - Saldo Manual (ARS/USD) en Config: para cuentas de IOL donde ║
  * ║    /api/v2/estadocuenta rechaza el token incluso recién         ║
@@ -276,6 +284,7 @@ function onOpen() {
     .addItem('⚙️ Diagnostico',         'diagnosticarPosiciones')
     .addItem('🔧 Reparar Tipo Cuenta (precios USD mal etiquetados)', 'repararTipoCuentaMovimientos')
     .addItem('🔍 Diagnóstico: Saldo IOL', 'diagnosticarSaldoIOL')
+    .addItem('🔍 Diagnóstico: Valor Total vs IOL', 'diagnosticarValorTotal')
     .addItem('🔍 Diagnóstico: Movimientos de Cuenta (depósitos/extracciones)', 'diagnosticarMovimientosCuenta')
     .addItem('🔍 Tickers Pendientes',  'verTickersPendientes')
     .addItem('🎯 Generar Radar', 'generarRadar')
@@ -3109,6 +3118,66 @@ function diagnosticarSaldoIOL() {
     ui.alert('🔍 Diagnóstico: Saldo IOL\n\n' + mensaje.substring(0, 1500));
   } catch(e) {
     ui.alert('❌ Error consultando /api/v2/estadocuenta: ' + e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+// DIAGNÓSTICO — VALOR TOTAL VS IOL
+// El total "Valor Actual" del sheet se calcula de abajo hacia arriba
+// (suma de cantidad × precio de cada posición en Posiciones). IOL tiene
+// su propio total oficial (titulosValorizados, por cuenta) en
+// /api/v2/estadocuenta — si no coinciden, hay un error en algún lado
+// (precio, split no detectado, ticker mal clasificado, etc.) que esto
+// ayuda a acotar antes de salir a buscarlo posición por posición.
+// ─────────────────────────────────────────────
+function diagnosticarValorTotal() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const data    = _fetchIOL('/api/v2/estadocuenta');
+    const cuentas = Array.isArray(data.cuentas) ? data.cuentas : [];
+    const mep     = _getMEPActual();
+
+    let valorizadoUSD = 0, valorizadoARS = 0;
+    const detalle = cuentas.map(cuenta => {
+      const monedaOriginal = String(cuenta.moneda || '');
+      const monedaNorm = monedaOriginal.toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const val   = parseFloat(cuenta.titulosValorizados || 0);
+      const esUSD = monedaNorm.includes('dolar');
+      if (esUSD) valorizadoUSD += val; else valorizadoARS += val;
+      return `  número: ${cuenta.numero} | moneda: "${monedaOriginal}" | titulosValorizados: ${val}`;
+    }).join('\n');
+
+    const valorizadoARSenUSD = mep > 0 ? valorizadoARS / mep : 0;
+    const totalIOL = valorizadoUSD + valorizadoARSenUSD;
+
+    // Total que calcula el sheet — suma de Posiciones!G (Valor USD)
+    const ss      = SpreadsheetApp.getActiveSpreadsheet();
+    const posSheet = ss.getSheetByName(HOJAS.POSICIONES);
+    let totalSheet = 0;
+    if (posSheet) {
+      const posData = posSheet.getDataRange().getValues();
+      for (let i = 1; i < posData.length; i++) {
+        const v = parseFloat(posData[i][6]); // col G
+        if (!isNaN(v)) totalSheet += v;
+      }
+    }
+
+    const diferencia    = totalIOL - totalSheet;
+    const diferenciaPct = totalIOL > 0 ? diferencia / totalIOL : 0;
+
+    const mensaje =
+      `Por cuenta (según IOL):\n${detalle}\n\n` +
+      `IOL — Valorizado USD directo: ${valorizadoUSD.toFixed(2)}\n` +
+      `IOL — Valorizado ARS: ${valorizadoARS.toFixed(2)} → en USD (MEP ${mep.toFixed(2)}): ${valorizadoARSenUSD.toFixed(2)}\n` +
+      `IOL — TOTAL valorizado (USD): ${totalIOL.toFixed(2)}\n\n` +
+      `Sheet — Suma de Posiciones!G (Valor USD): ${totalSheet.toFixed(2)}\n\n` +
+      `Diferencia: ${diferencia.toFixed(2)} USD (${(diferenciaPct * 100).toFixed(1)}%)`;
+
+    Logger.log(mensaje);
+    ui.alert('🔍 Diagnóstico: Valor Total vs IOL\n\n' + mensaje.substring(0, 1500));
+  } catch(e) {
+    ui.alert('❌ Error: ' + e.message);
   }
 }
 

@@ -87,6 +87,21 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.13 — diagnóstico Valor Total vs IOL
+
+En la cuenta de Trini, "Activos valorizados en USD" en la web de IOL
+(8304,97) no coincide con lo que muestra el sheet. El sheet calcula el
+total de abajo hacia arriba (suma cantidad × precio de cada posición en
+`Posiciones`), sin cruzarlo nunca contra el total oficial de IOL.
+
+- Nuevo menú **🔍 Diagnóstico: Valor Total vs IOL**: trae
+  `titulosValorizados` de `/api/v2/estadocuenta` por cuenta (ARS y USD),
+  convierte la parte en ARS a USD con el MEP del día, y lo compara contra
+  `SUM(Posiciones!G:G)` — muestra ambos totales y la diferencia en USD y
+  en %. No identifica todavía qué ticker puntual está mal (la API de
+  saldo no da ese detalle por posición), pero confirma si hay una
+  diferencia real y de qué magnitud antes de salir a buscarla a mano.
+
 ## v3.12 — Saldo Manual como respaldo (cuentas donde la API de saldo no anda)
 
 En la cuenta de Trini, `/api/v2/estadocuenta` rechaza el token incluso
