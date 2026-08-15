@@ -40,9 +40,27 @@ como respaldo solo para lo que la API no capture.
 da 200 pero solo trae saldos (nada nuevo, ya lo usa `_actualizarSaldoIOL`).
 `/api/v2/estadocuenta/movimientos` da 500 (Runtime Error, no 404) — el
 endpoint probablemente existe pero le falta algo. `/api/v2/movimientos` y
-`/api/movimientos` dan 404 — no existen. El diagnóstico ahora saca el
-número de cuenta real de `/api/v2/estadocuenta` (ej. `310379`) y prueba
-variantes con ese número en la URL y con `fechaDesde`/`fechaHasta`.
+`/api/movimientos` dan 404 — no existen.
+
+**Ronda 2** (probada contra la cuenta real de Maki, con el número de cuenta
+real en la URL): las 4 variantes con GET dieron 500 igual.
+
+**Encontrado**: buscando en la guía de otro cliente MCP de IOL en GitHub
+([fernandezpablo85/mcpiol](https://github.com/fernandezpablo85/mcpiol),
+`iol-api-client-guide.md`) apareció el endpoint real — es un recurso
+separado de "cuentas bancarias", no de estado de cuenta ni de operaciones,
+y se consulta con **POST**, no GET (de ahí los 500 en las rondas
+anteriores):
+
+```
+POST /cuentas-bancarias/movimientos
+POST /cuentas-bancarias/deposito     (informar un depósito)
+POST /cuentas-bancarias/extraccion   (pedir una extracción)
+```
+
+**Ronda 3**: probar `POST /cuentas-bancarias/movimientos` con body
+`{fechaDesde, fechaHasta}`, con y sin prefijo `/api`, y sin body, para
+confirmar la forma exacta antes de escribir la importación real.
 
 ## v3.5 — Reentrada restringida a Renta Variable
 

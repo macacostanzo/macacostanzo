@@ -2651,47 +2651,36 @@ function diagnosticarMovimientosCuenta() {
   desdeDate.setDate(desdeDate.getDate() - 90);
   const desde = _fmtFecha(desdeDate);
 
-  // Ronda 1: ya sabemos que /api/v2/estadocuenta da 200 (solo saldos) y que
-  // /api/v2/estadocuenta/movimientos da 500 (probablemente le falta el
-  // número de cuenta y/o rango de fechas). Se usa el número de cuenta real
-  // devuelto por estadocuenta para armar variantes más específicas.
-  let numerosCuenta = [];
-  try {
-    const estado = _fetchIOL('/api/v2/estadocuenta');
-    numerosCuenta = (estado.cuentas || [])
-      .map(c => c.numero)
-      .filter(Boolean)
-      .filter((v, i, arr) => arr.indexOf(v) === i); // únicos
-  } catch(e) {
-    Logger.log('No se pudo leer estadocuenta para sacar el número de cuenta: ' + e.message);
-  }
-
-  const candidatos = [
-    `/api/v2/estadocuenta/movimientos?fechaDesde=${desde}&fechaHasta=${hasta}`,
+  // Ronda 1 y 2 (GET contra /api/v2/estadocuenta/... y /api/v2/movimientos/...)
+  // dieron siempre 500 — pista real: el endpoint de movimientos BANCARIOS
+  // (depósitos/extracciones) es un recurso aparte, "/cuentas-bancarias/
+  // movimientos", y se consulta con POST, no GET. De ahí los 500 (verbo
+  // equivocado). Ronda 3: probar esa ruta con POST y variantes de body/prefijo.
+  const payload = { fechaDesde: desde, fechaHasta: hasta };
+  const intentos = [
+    { ep: '/cuentas-bancarias/movimientos',     metodo: 'POST', body: payload },
+    { ep: '/api/cuentas-bancarias/movimientos', metodo: 'POST', body: payload },
+    { ep: '/cuentas-bancarias/movimientos',     metodo: 'POST', body: null },
+    { ep: `/cuentas-bancarias/movimientos?fechaDesde=${desde}&fechaHasta=${hasta}`, metodo: 'GET', body: null },
   ];
-  numerosCuenta.forEach(num => {
-    candidatos.push(`/api/v2/estadocuenta/${num}/movimientos`);
-    candidatos.push(`/api/v2/estadocuenta/${num}/movimientos?fechaDesde=${desde}&fechaHasta=${hasta}`);
-    candidatos.push(`/api/v2/movimientos/${num}`);
-  });
 
   const resultados = [];
-  candidatos.forEach(ep => {
+  intentos.forEach(({ ep, metodo, body }) => {
+    const etiqueta = `${metodo} ${ep}${body ? ' (body: ' + JSON.stringify(body) + ')' : ''}`;
     try {
-      const data = _fetchIOL(ep);
+      const data = _fetchIOL(ep, metodo, body);
       const texto = JSON.stringify(data);
-      resultados.push(`✅ ${ep}\n${texto.substring(0, 600)}${texto.length > 600 ? '…' : ''}`);
+      resultados.push(`✅ ${etiqueta}\n${texto.substring(0, 600)}${texto.length > 600 ? '…' : ''}`);
     } catch(e) {
-      resultados.push(`❌ ${ep}\n${e.message.substring(0, 150)}`);
+      resultados.push(`❌ ${etiqueta}\n${e.message.substring(0, 150)}`);
     }
   });
 
   const mensaje = resultados.join('\n\n─────────────\n\n');
   Logger.log(mensaje);
   ui.alert(
-    '🔍 Diagnóstico: movimientos de cuenta (ronda 2)\n\n' +
-    'Cuentas detectadas: ' + (numerosCuenta.join(', ') || 'ninguna') + '\n' +
-    'Se probaron ' + candidatos.length + ' endpoints. Detalle completo en\n' +
+    '🔍 Diagnóstico: movimientos de cuenta (ronda 3 — /cuentas-bancarias/movimientos)\n\n' +
+    'Se probaron ' + intentos.length + ' variantes. Detalle completo en\n' +
     'Extensiones → Apps Script → Ejecuciones (o Ver → Registros).\n\n' +
     mensaje.substring(0, 1200)
   );
