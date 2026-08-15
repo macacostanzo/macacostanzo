@@ -2651,17 +2651,15 @@ function diagnosticarMovimientosCuenta() {
   desdeDate.setDate(desdeDate.getDate() - 90);
   const desde = _fmtFecha(desdeDate);
 
-  // Ronda 1 y 2 (GET contra /api/v2/estadocuenta/... y /api/v2/movimientos/...)
-  // dieron siempre 500 — pista real: el endpoint de movimientos BANCARIOS
-  // (depósitos/extracciones) es un recurso aparte, "/cuentas-bancarias/
-  // movimientos", y se consulta con POST, no GET. De ahí los 500 (verbo
-  // equivocado). Ronda 3: probar esa ruta con POST y variantes de body/prefijo.
-  const payload = { fechaDesde: desde, fechaHasta: hasta };
+  // Rondas 1-3 (/api/v2/estadocuenta/..., /api/v2/movimientos/...,
+  // /cuentas-bancarias/movimientos) dieron 500 o 404 en todas sus variantes
+  // — "/cuentas-bancarias/..." parece no existir en este host.
+  // Ronda 4: nuestro importador usa /api/operaciones (v1, sin versión). El
+  // código fuente real de otro cliente de esta misma API usa /api/v2/
+  // operaciones — y v2 podría ser el endpoint más amplio que junta trades
+  // Y movimientos de cuenta (depósitos/créditos) en un solo listado.
   const intentos = [
-    { ep: '/cuentas-bancarias/movimientos',     metodo: 'POST', body: payload },
-    { ep: '/api/cuentas-bancarias/movimientos', metodo: 'POST', body: payload },
-    { ep: '/cuentas-bancarias/movimientos',     metodo: 'POST', body: null },
-    { ep: `/cuentas-bancarias/movimientos?fechaDesde=${desde}&fechaHasta=${hasta}`, metodo: 'GET', body: null },
+    { ep: `/api/v2/operaciones?fechaDesde=${desde}&fechaHasta=${hasta}`, metodo: 'GET', body: null },
   ];
 
   const resultados = [];
@@ -2670,7 +2668,15 @@ function diagnosticarMovimientosCuenta() {
     try {
       const data = _fetchIOL(ep, metodo, body);
       const texto = JSON.stringify(data);
-      resultados.push(`✅ ${etiqueta}\n${texto.substring(0, 600)}${texto.length > 600 ? '…' : ''}`);
+      // Contar cuántas entradas tienen un "tipo" que no sea Compra/Venta,
+      // como pista rápida de si hay movimientos de depósito/crédito mezclados.
+      let pistaTipos = '';
+      if (Array.isArray(data)) {
+        const tipos = {};
+        data.forEach(op => { const t = op.tipo || op.movement_type_name || '?'; tipos[t] = (tipos[t]||0)+1; });
+        pistaTipos = `\n\nTipos encontrados (${data.length} filas): ${JSON.stringify(tipos)}`;
+      }
+      resultados.push(`✅ ${etiqueta}${pistaTipos}\n${texto.substring(0, 1500)}${texto.length > 1500 ? '…' : ''}`);
     } catch(e) {
       resultados.push(`❌ ${etiqueta}\n${e.message.substring(0, 150)}`);
     }
@@ -2679,10 +2685,10 @@ function diagnosticarMovimientosCuenta() {
   const mensaje = resultados.join('\n\n─────────────\n\n');
   Logger.log(mensaje);
   ui.alert(
-    '🔍 Diagnóstico: movimientos de cuenta (ronda 3 — /cuentas-bancarias/movimientos)\n\n' +
-    'Se probaron ' + intentos.length + ' variantes. Detalle completo en\n' +
+    '🔍 Diagnóstico: movimientos de cuenta (ronda 4 — /api/v2/operaciones)\n\n' +
+    'Detalle completo (con más caracteres del JSON) en\n' +
     'Extensiones → Apps Script → Ejecuciones (o Ver → Registros).\n\n' +
-    mensaje.substring(0, 1200)
+    mensaje.substring(0, 1500)
   );
 }
 

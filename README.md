@@ -58,9 +58,22 @@ POST /cuentas-bancarias/deposito     (informar un depósito)
 POST /cuentas-bancarias/extraccion   (pedir una extracción)
 ```
 
-**Ronda 3**: probar `POST /cuentas-bancarias/movimientos` con body
-`{fechaDesde, fechaHasta}`, con y sin prefijo `/api`, y sin body, para
-confirmar la forma exacta antes de escribir la importación real.
+**Ronda 3**: `POST /cuentas-bancarias/movimientos` dio 404 en las 4
+variantes probadas (con/sin `/api`, con/sin body, GET también). Esa ruta
+no existe en `api.invertironline.com`.
+
+**Corrección**: la guía (`iol-api-client-guide.md`) de ese otro proyecto de
+GitHub documentaba endpoints que ese cliente ni siquiera implementa —
+mirando el código fuente real (`client.py`) no hay ningún endpoint de
+"cuentas-bancarias". Lo que sí tiene: `get_account_operations()` usa
+`/api/v2/operaciones` — con **v2**, mientras que `importarMovimientosIOL()`
+usa `/api/operaciones` sin versión. Es un candidato fuerte: v2 podría ser
+el endpoint más amplio que junta trades y movimientos de cuenta (depósitos,
+créditos) en un solo listado — coincide con el patrón visto en datos reales
+(mismo campo de tipo con valores "Comp", "Ven", "Depo", "Credito" mezclados).
+
+**Ronda 4**: probar `GET /api/v2/operaciones?fechaDesde=...&fechaHasta=...`
+y contar qué tipos de movimiento trae.
 
 ## v3.5 — Reentrada restringida a Renta Variable
 
