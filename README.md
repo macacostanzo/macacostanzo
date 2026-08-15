@@ -72,8 +72,20 @@ el endpoint más amplio que junta trades y movimientos de cuenta (depósitos,
 créditos) en un solo listado — coincide con el patrón visto en datos reales
 (mismo campo de tipo con valores "Comp", "Ven", "Depo", "Credito" mezclados).
 
-**Ronda 4**: probar `GET /api/v2/operaciones?fechaDesde=...&fechaHasta=...`
-y contar qué tipos de movimiento trae.
+**Ronda 4**: `GET /api/v2/operaciones` respondió 200, pero con exactamente
+los mismos 7 tipos que la v1 (Compra, Venta, Pago de Dividendos, Pago de
+Renta, Pago de Amortización, Suscripción FCI, Rescate FCI) — nada de
+depósitos ahí tampoco.
+
+**Cierre**: se revisó el código fuente de dos proyectos de terceros que ya
+consumen esta misma API y no se encontró un endpoint de movimientos de
+cuenta/depósitos funcional. La documentación oficial
+(`api.invertironline.com/help`, `www.invertironline.com/documentacion-api`)
+quedó fuera de alcance por bloqueo de red. **Se decidió no seguir
+adivinando endpoints contra cuentas reales** y mantener la carga manual en
+`Ingresos_Egresos`, que ya funciona bien. El menú "🔍 Diagnóstico:
+Movimientos de Cuenta" queda en el script sin usarse, por si en algún
+momento se retoma con acceso a la documentación oficial.
 
 ## v3.5 — Reentrada restringida a Renta Variable
 
