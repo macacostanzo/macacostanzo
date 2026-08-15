@@ -1,8 +1,14 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.4                    ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.5                    ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.5:                                               ║
+ * ║  - Reentrada ahora es SOLO Renta Variable. En Renta Fija/ONs  ║
+ * ║    el precio baja por amortización de capital según           ║
+ * ║    cronograma — no es "está barato", es descuento normal del  ║
+ * ║    nominal remanente. Para bonos ya existe la sección de       ║
+ * ║    Alertas Renta Fija (basada en TIR, que sí aplica ahí).     ║
  * ║  CAMBIOS v3.4:                                               ║
  * ║  - Ajuste de splits en Reentrada: cuando un split llega como  ║
  * ║    acreditación de títulos sin efectivo (cantidad>0, monto=0, ║
@@ -2904,7 +2910,7 @@ function generarRadar() {
   // ════════════════════════════════════════════════════════════
   // SECCIÓN 3 — REENTRADA (-10% desde última operación)
   // ════════════════════════════════════════════════════════════
-  tit(f, '  🎯  OPORTUNIDADES DE REENTRADA  (−10% desde última operación)');
+  tit(f, '  🎯  OPORTUNIDADES DE REENTRADA — Renta Variable  (−10% desde última operación)');
   f++;
 
   sheet.getRange(f, 1, 1, 5).setValues([[
@@ -2934,8 +2940,13 @@ function generarRadar() {
   const tickersRevisar = new Set();
   for (let i = 1; i < posData.length; i++) {
     const ticker  = String(posData[i][0] || '').trim();
+    const clase   = String(posData[i][23] || ''); // col X
     const alerta  = String(posData[i][30] || ''); // col AE
-    if (ticker && alerta.includes('⚠️')) tickersRevisar.add(ticker);
+    // Solo importa acá si es Renta Variable — el resto de las clases ya
+    // queda afuera de Reentrada por el filtro de clase, no por esto.
+    if (ticker && clase === 'Renta Variable' && alerta.includes('⚠️')) {
+      tickersRevisar.add(ticker);
+    }
   }
 
   // Splits detectados a partir de acreditaciones de títulos sin efectivo
@@ -2944,10 +2955,16 @@ function generarRadar() {
   // precio actual.
   const splitsPorTicker = _calcularSplitsPorTicker(movs);
 
+  // Solo Renta Variable: en Renta Fija/ONs el precio baja por amortización
+  // de capital (parcial o total, según cronograma) a medida que se acerca
+  // el vencimiento — no es una señal de "está barato", es descuento normal
+  // del valor nominal remanente. Para eso ya está la sección de Alertas
+  // Renta Fija más abajo, que compara TIR (sí tiene sentido para bonos).
   const ultimaOp = {}; // tickerBase -> { fecha, fechaStr, precioUSD, tipo }
   movs.forEach(m => {
     if (!['COMPRA', 'VENTA'].includes(m.tipo)) return;
     if (!m.tickerBase) return;
+    if (m.clase !== 'Renta Variable') return;
     const cantAbs = Math.abs(m.cantidad);
     const precioUSD = m.precioUSD || (cantAbs > 0 ? Math.abs(m.montoUSD) / cantAbs : 0);
     if (!precioUSD) return;

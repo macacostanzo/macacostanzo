@@ -14,6 +14,25 @@ una estrategia de inversión de largo plazo.
 4. Primera vez: `📊 Inversiones → ⚙️ Inicializar Hojas`, después
    `🔐 Configurar Acceso IOL`, y finalmente `🔄 Actualizar Todo`.
 
+## v3.5 — Reentrada restringida a Renta Variable
+
+Con datos reales apareció el motivo por el que ni el ajuste de split de v3.4
+alcanzaba: en Renta Fija/ONs el precio no cae porque el activo "esté barato"
+sino porque va amortizando capital según su cronograma (parcial o total, a
+medida que se acerca el vencimiento). Comparar precio de compra contra
+precio actual ahí no tiene el mismo significado que en una acción/CEDEAR, y
+modelarlo bien requeriría el cronograma de amortización de cada bono, que
+no está disponible.
+
+- La sección "Oportunidades de Reentrada" ahora filtra por
+  `clase === 'Renta Variable'` — Bonos, ONs y FCI quedan afuera de esta
+  comparación de precio. Para Renta Fija ya existe la sección de "Alertas
+  Renta Fija" (basada en TIR vía la API de IOL), que es la comparación
+  correcta para ese tipo de activo.
+- El mensaje de "tickers excluidos por posible split" también se acotó a
+  Renta Variable, para no mezclarlo con lo que ya queda afuera por ser
+  Renta Fija.
+
 ## v3.4 — split ajustado en el PRECIO de Reentrada, no solo en la cantidad
 
 Corrección sobre v3.3: cuando un split llega bien capturado como movimiento
