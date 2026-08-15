@@ -1,8 +1,14 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.1                    ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.2                    ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.2:                                               ║
+ * ║  - Nueva hoja "Config": targets de asignación (RV/RF/Mixta)  ║
+ * ║    y umbrales de riesgo/rebalanceo/TIR ahora se leen de la   ║
+ * ║    planilla, no están fijos en el código. El MISMO           ║
+ * ║    monitor_iol.js sirve para Maki, Frank, Trini, etc. — cada ║
+ * ║    quien ajusta su propio perfil editando su hoja Config.    ║
  * ║  CAMBIOS v3.1 (foco: inversora largo placista):               ║
  * ║  - Fix: "Reentrada" del Radar comparaba un objeto contra      ║
  * ║    strings y leía una columna inexistente → nunca disparaba.  ║
@@ -43,18 +49,91 @@ const HOJAS = {
   RENTA_FIJA:       'Renta_Fija',
   HISTORIAL:        'Historial',
   FLUJOS_TIR:       'Flujos_TIR',
+  CONFIG:           'Config',
 };
 
 const IOL_BASE = 'https://api.invertironline.com';
 
-// Umbrales de riesgo/rebalanceo — pensados para una inversora largo placista.
-// Los targets de asignación (65/20/10) se mantienen como estaban en v3.0.
+// Umbrales de riesgo/rebalanceo — valores por DEFECTO, pensados para una
+// inversora largo placista. Cada planilla (Maki, Frank, Trini, ...) usa el
+// MISMO monitor_iol.js pero puede tener un perfil de riesgo distinto: estos
+// valores son solo el fallback cuando la hoja "Config" no existe o no trae
+// un valor cargado. Para ajustar el perfil de una persona puntual, se edita
+// la hoja Config de SU planilla — no hace falta tocar el código.
 const RIESGO = {
   TICKER_REVISAR:   0.15,  // % del portfolio en un solo ticker → revisar
   TICKER_ALERTA:    0.25,  // % del portfolio en un solo ticker → alerta fuerte
   EMISOR_ALERTA:    0.20,  // % del portfolio en ONs/Bonos de un mismo emisor
   REBALANCEO_MIN:   0.03,  // diferencia mínima vs target para sugerir acción
 };
+
+// ─────────────────────────────────────────────
+// CONFIG POR PLANILLA — targets y umbrales editables sin tocar código
+// ─────────────────────────────────────────────
+function _cargarConfig() {
+  const defaults = {
+    targetRV:      0.65,
+    targetRF:      0.20,
+    targetRM:      0.10,
+    tickerRevisar: RIESGO.TICKER_REVISAR,
+    tickerAlerta:  RIESGO.TICKER_ALERTA,
+    emisorAlerta:  RIESGO.EMISOR_ALERTA,
+    rebalanceoMin: RIESGO.REBALANCEO_MIN,
+    tirRFObjetivo: 0.08,
+  };
+
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(HOJAS.CONFIG);
+  if (!sheet) return defaults;
+
+  const etiquetaAClave = {
+    'Target Renta Variable':    'targetRV',
+    'Target Renta Fija':        'targetRF',
+    'Target Renta Mixta':       'targetRM',
+    'Umbral Ticker Revisar':    'tickerRevisar',
+    'Umbral Ticker Alerta':     'tickerAlerta',
+    'Umbral Emisor Alerta':     'emisorAlerta',
+    'Umbral Rebalanceo Min':    'rebalanceoMin',
+    'Objetivo TIR Renta Fija':  'tirRFObjetivo',
+  };
+
+  const config = Object.assign({}, defaults);
+  sheet.getDataRange().getValues().slice(1).forEach(fila => {
+    const clave = etiquetaAClave[String(fila[0] || '').trim()];
+    if (!clave) return;
+    const val = parseFloat(fila[1]);
+    if (!isNaN(val) && val >= 0) config[clave] = val;
+  });
+  return config;
+}
+
+function _inicializarConfig() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  let   sheet = ss.getSheetByName(HOJAS.CONFIG);
+  if (!sheet) sheet = ss.insertSheet(HOJAS.CONFIG);
+  if (sheet.getLastRow() > 0) return; // no pisar una config ya cargada
+
+  sheet.getRange(1, 1, 1, 3)
+    .setValues([['Parámetro', 'Valor', 'Nota']])
+    .setBackground('#1a73e8').setFontColor('white')
+    .setFontWeight('bold').setHorizontalAlignment('center');
+
+  const filas = [
+    ['Target Renta Variable',   0.65, 'Target + Target RF + Target Mixta debería sumar 100%'],
+    ['Target Renta Fija',       0.20, ''],
+    ['Target Renta Mixta',      0.10, ''],
+    ['Umbral Ticker Revisar',   0.15, '% del portfolio en un solo ticker → revisar'],
+    ['Umbral Ticker Alerta',    0.25, '% del portfolio en un solo ticker → alerta fuerte'],
+    ['Umbral Emisor Alerta',    0.20, '% en ONs/Bonos de un mismo emisor'],
+    ['Umbral Rebalanceo Min',   0.03, 'Diferencia mínima vs target para sugerir comprar/vender'],
+    ['Objetivo TIR Renta Fija', 0.08, 'TIR anualizada mínima esperada en USD'],
+  ];
+  sheet.getRange(2, 1, filas.length, 3).setValues(filas);
+  sheet.getRange(2, 2, filas.length, 1).setNumberFormat('0.0%');
+  sheet.setColumnWidth(1, 200);
+  sheet.setColumnWidth(3, 380);
+  sheet.autoResizeColumns(2, 1);
+}
 
 // ─────────────────────────────────────────────
 // MENÚ
@@ -68,10 +147,21 @@ function onOpen() {
     .addSeparator()
     .addItem('🔐 Configurar Acceso IOL',     'configurarAccesoIOL')
     .addItem('⚙️ Inicializar Hojas',         'inicializarHojas')
+    .addItem('🎛️ Ver/Editar Config (targets y riesgo)', 'abrirConfig')
     .addItem('⚙️ Diagnostico',         'diagnosticarPosiciones')
     .addItem('🔍 Tickers Pendientes',  'verTickersPendientes')
     .addItem('🎯 Generar Radar', 'generarRadar')
     .addToUi();
+}
+
+// ─────────────────────────────────────────────
+// ABRIR / CREAR HOJA CONFIG
+// ─────────────────────────────────────────────
+function abrirConfig() {
+  _inicializarConfig();
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(HOJAS.CONFIG);
+  if (sheet) ss.setActiveSheet(sheet);
 }
 
 // ─────────────────────────────────────────────
@@ -1037,12 +1127,16 @@ function calcularPosiciones() {
     Logger.log('Error obteniendo precios IOL: ' + e.message);
   }
 
+  // Config de ESTA planilla — targets/umbrales pueden variar por persona.
+  const config = _cargarConfig();
+
   _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL);
   _escribirHistorial(cerradas, flujosPorTicker);
-  _escribirPortfolio(abiertas, cerradas);
-  _escribirRentaFija(abiertas);
+  _escribirPortfolio(abiertas, cerradas, config);
+  _escribirRentaFija(abiertas, config);
   _escribirFlujosTIR(movs);
   _inicializarIngresosEgresos();
+  _inicializarConfig();
 
   if (advertencias.size > 0) {
     const tickers = [...advertencias];
@@ -1427,7 +1521,8 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
 // ─────────────────────────────────────────────
 // ESCRIBIR PORTFOLIO
 // ─────────────────────────────────────────────
-function _escribirPortfolio(abiertas, cerradas) {
+function _escribirPortfolio(abiertas, cerradas, config) {
+  config = config || _cargarConfig();
   const sheet = _getSheet(HOJAS.PORTFOLIO);
   const props = PropertiesService.getScriptProperties();
 
@@ -1559,15 +1654,17 @@ function _escribirPortfolio(abiertas, cerradas) {
     `=IFERROR(XIRR(Flujos_TIR!F2:F2000;Flujos_TIR!A2:A2000);"Sin datos")`, '0.00%');
   sheet.getRange(f, 1, 1, 2).setFontWeight('bold');
 
-  // Benchmark RF
+  // Benchmark RF — viene de la hoja Config de ESTA planilla (o del default
+  // si no está configurado), no de un valor fijo en el código.
   f++;
   sheet.getRange(f, 1).setValue('Benchmark RF (objetivo)');
-  sheet.getRange(f, 2).setValue(0.08).setNumberFormat('0.00%');
+  sheet.getRange(f, 2).setValue(config.tirRFObjetivo).setNumberFormat('0.00%');
   const benchmarkRow = f;
 
-  // Semáforo benchmark
+  // Semáforo benchmark — referencia la celda del benchmark en vez de
+  // repetir el número (así conviven ambos valores sin desincronizarse).
   sheet.getRange(f, 3).setFormula(
-    `=IF(B${filaTirRF}="Sin datos";"⚪";IF(B${filaTirRF}>=0,08;"✅ Supera objetivo";"🔴 Bajo objetivo"))`
+    `=IF(B${filaTirRF}="Sin datos";"⚪";IF(B${filaTirRF}>=B${benchmarkRow};"✅ Supera objetivo";"🔴 Bajo objetivo"))`
   );
   sheet.getRange(f, 3).setFontWeight('bold');
 
@@ -1663,7 +1760,8 @@ function _escribirPortfolio(abiertas, cerradas) {
 // ─────────────────────────────────────────────
 // ESCRIBIR RENTA FIJA
 // ─────────────────────────────────────────────
-function _escribirRentaFija(abiertas) {
+function _escribirRentaFija(abiertas, config) {
+  config = config || _cargarConfig();
   const sheet = _getSheet(HOJAS.RENTA_FIJA);
   sheet.clearContents();
   sheet.clearFormats();
@@ -1743,9 +1841,12 @@ function _escribirRentaFija(abiertas) {
       `=IFERROR(F${r}/VLOOKUP("TOTAL PORTFOLIO (USD)";Portfolio!A:B;2;0);"")`
     );
 
-    // Col L: Alerta concentración ONs >20%
+    // Col L: Alerta concentración ONs — umbral desde la hoja Config (por
+    // defecto 20%), formateado con coma decimal porque la fórmula queda en
+    // locale es-AR.
+    const umbralEmisor = String(config.emisorAlerta).replace('.', ',');
     sheet.getRange(r, 12).setFormula(
-  `=IFERROR(IF(C${r}="ON";IF(SUMIF(C$2:C$${nRows+1};"ON";F$2:F$${nRows+1})>0;IF(SUMIF(D$2:D$${nRows+1};D${r};F$2:F$${nRows+1})/SUMIF(C$2:C$${nRows+1};"ON";F$2:F$${nRows+1})>0,2;"⚠️ "&TEXT(SUMIF(D$2:D$${nRows+1};D${r};F$2:F$${nRows+1})/SUMIF(C$2:C$${nRows+1};"ON";F$2:F$${nRows+1});"0,0%")&" en "&D${r};"✓");"");"");"")`
+  `=IFERROR(IF(C${r}="ON";IF(SUMIF(C$2:C$${nRows+1};"ON";F$2:F$${nRows+1})>0;IF(SUMIF(D$2:D$${nRows+1};D${r};F$2:F$${nRows+1})/SUMIF(C$2:C$${nRows+1};"ON";F$2:F$${nRows+1})>${umbralEmisor};"⚠️ "&TEXT(SUMIF(D$2:D$${nRows+1};D${r};F$2:F$${nRows+1})/SUMIF(C$2:C$${nRows+1};"ON";F$2:F$${nRows+1});"0,0%")&" en "&D${r};"✓");"");"");"")`
 );
   }
 
@@ -2039,6 +2140,7 @@ function inicializarHojas() {
   ]);
 
   _inicializarIngresosEgresos();
+  _inicializarConfig();
   poblarEquivalencias();
   poblarRatios();
 
@@ -2046,8 +2148,11 @@ function inicializarHojas() {
     '✅ Hojas verificadas.\n\n' +
     'PRÓXIMOS PASOS:\n\n' +
     '1️⃣  Menú → 🔐 Configurar Acceso IOL\n' +
-    '2️⃣  Verificá que CCL tenga datos históricos de MEP\n' +
-    '3️⃣  Ejecutá "🔄 Actualizar Todo"'
+    '2️⃣  Revisá la hoja "Config" — ahí se ajustan los targets de\n' +
+    '     asignación y los umbrales de riesgo para ESTA planilla\n' +
+    '     (cada persona puede tener los suyos, sin tocar el código)\n' +
+    '3️⃣  Verificá que CCL tenga datos históricos de MEP\n' +
+    '4️⃣  Ejecutá "🔄 Actualizar Todo"'
   );
 }
 
@@ -2480,6 +2585,10 @@ function generarRadar() {
     if (color) r.setBackground(color);
   }
 
+  // Config de ESTA planilla — targets y umbrales pueden ser distintos
+  // para cada persona (Maki, Frank, Trini, ...) sin tocar el código.
+  const config = _cargarConfig();
+
   // Posiciones — se leen UNA sola vez y se reutilizan en varias secciones
   // (concentración, arbitraje, alertas RF) en vez de re-leer la hoja cada vez.
   const posSheet = ss.getSheetByName(HOJAS.POSICIONES);
@@ -2529,9 +2638,9 @@ function generarRadar() {
   }
 
   const targets = [
-    { clase: 'Renta Variable', target: 0.65, actual: pctRV },
-    { clase: 'Renta Fija',     target: 0.20, actual: pctRF },
-    { clase: 'Renta Mixta / FCI', target: 0.10, actual: pctRM },
+    { clase: 'Renta Variable', target: config.targetRV, actual: pctRV },
+    { clase: 'Renta Fija',     target: config.targetRF, actual: pctRF },
+    { clase: 'Renta Mixta / FCI', target: config.targetRM, actual: pctRM },
   ];
 
   targets.forEach(t => {
@@ -2547,7 +2656,7 @@ function generarRadar() {
 
     // Monto sugerido a comprar (+) o vender (−) para volver al target.
     let accion = '—';
-    if (absDiff >= RIESGO.REBALANCEO_MIN && totalPortfolio > 0) {
+    if (absDiff >= config.rebalanceoMin && totalPortfolio > 0) {
       const montoAjuste = -diff * totalPortfolio;
       accion = (montoAjuste > 0 ? 'Comprar ≈ USD ' : 'Vender ≈ USD ')
         + Math.abs(montoAjuste).toFixed(0);
@@ -2611,11 +2720,11 @@ function generarRadar() {
     // Top 5 posiciones individuales por concentración
     posicionesRiesgo.sort((a, b) => b.pct - a.pct);
     posicionesRiesgo.slice(0, 5).forEach(p => {
-      const estado = p.pct >= RIESGO.TICKER_ALERTA  ? '🔴 Muy concentrado'
-                   : p.pct >= RIESGO.TICKER_REVISAR ? '🟡 Revisar'
+      const estado = p.pct >= config.tickerAlerta  ? '🔴 Muy concentrado'
+                   : p.pct >= config.tickerRevisar ? '🟡 Revisar'
                    : '✅ OK';
-      const color  = p.pct >= RIESGO.TICKER_ALERTA  ? C.ROJO
-                   : p.pct >= RIESGO.TICKER_REVISAR ? C.AMARILLO
+      const color  = p.pct >= config.tickerAlerta  ? C.ROJO
+                   : p.pct >= config.tickerRevisar ? C.AMARILLO
                    : C.VERDE;
       fila(f, [p.ticker, 'Posición individual', (p.pct * 100).toFixed(1) + '%', estado], color);
       f++;
@@ -2624,9 +2733,9 @@ function generarRadar() {
     // Concentración por emisor (ONs/Bonos del mismo emisor, cruzando toda la cartera)
     Object.entries(porEmisor).forEach(([emisor, valor]) => {
       const pct = totalPosicionesUSD > 0 ? valor / totalPosicionesUSD : 0;
-      if (pct < RIESGO.TICKER_REVISAR) return;
-      const estado = pct >= RIESGO.EMISOR_ALERTA ? '🔴 Muy concentrado' : '🟡 Revisar';
-      const color  = pct >= RIESGO.EMISOR_ALERTA ? C.ROJO : C.AMARILLO;
+      if (pct < config.tickerRevisar) return;
+      const estado = pct >= config.emisorAlerta ? '🔴 Muy concentrado' : '🟡 Revisar';
+      const color  = pct >= config.emisorAlerta ? C.ROJO : C.AMARILLO;
       fila(f, [emisor, 'Emisor (ON/Bono)', (pct * 100).toFixed(1) + '%', estado], color);
       f++;
     });
@@ -2796,9 +2905,10 @@ function generarRadar() {
   f++;
 
   // ════════════════════════════════════════════════════════════
-  // SECCIÓN 5 — ALERTAS RENTA FIJA (TIR < 8%)
+  // SECCIÓN 5 — ALERTAS RENTA FIJA (TIR < objetivo de Config)
   // ════════════════════════════════════════════════════════════
-  tit(f, '  📉  ALERTAS RENTA FIJA  (TIR actual < 8%)');
+  const tirObjetivoPct = (config.tirRFObjetivo * 100).toFixed(0);
+  tit(f, `  📉  ALERTAS RENTA FIJA  (TIR actual < ${tirObjetivoPct}%)`);
   f++;
 
   sheet.getRange(f, 1, 1, 4).setValues([[
@@ -2833,9 +2943,9 @@ function generarRadar() {
   } else {
     alertasRF.sort((a, b) => a.tir - b.tir);
     alertasRF.forEach(r => {
-      const bajo   = r.tir < 0.08;
+      const bajo   = r.tir < config.tirRFObjetivo;
       const color  = bajo ? C.ROJO : C.VERDE;
-      const estado = bajo ? '🔴 Por debajo del objetivo' : '✅ Supera 8%';
+      const estado = bajo ? '🔴 Por debajo del objetivo' : `✅ Supera ${tirObjetivoPct}%`;
       fila(f, [
         r.ticker,
         r.nombre,

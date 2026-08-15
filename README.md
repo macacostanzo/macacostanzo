@@ -14,6 +14,37 @@ una estrategia de inversión de largo plazo.
 4. Primera vez: `📊 Inversiones → ⚙️ Inicializar Hojas`, después
    `🔐 Configurar Acceso IOL`, y finalmente `🔄 Actualizar Todo`.
 
+## v3.2 — targets/umbrales configurables por planilla
+
+Este monitor lo usan varias personas (Maki, Frank, Trini, ...) con perfiles
+de riesgo distintos, todas corriendo el mismo `monitor_iol.js`. Antes los
+targets de asignación (65/20/10) y los umbrales de riesgo estaban fijos en
+el código, así que cada persona necesitaba su propia copia editada del
+archivo.
+
+- Nueva hoja **Config** en cada planilla (se crea sola al correr
+  "⚙️ Inicializar Hojas", "🔄 Actualizar Todo" o el nuevo menú
+  "🎛️ Ver/Editar Config"): ahí se edita el target por clase y los umbrales
+  de concentración/rebalanceo/TIR objetivo de Renta Fija, sin tocar código.
+- Si la hoja Config no existe o un valor está vacío, se usan los defaults
+  de siempre (65/20/10, 15%/25% concentración, 20% por emisor, 8% TIR RF)
+  — pegar v3.2 sobre una planilla existente no cambia nada hasta que se
+  edite la hoja Config.
+- El benchmark de TIR de Renta Fija en `Portfolio` y el umbral de
+  concentración por emisor ON en `Renta_Fija` ahora también leen ese mismo
+  valor de Config, en vez de tener el 8%/20% repetido en tres lugares.
+
+**Validado contra los datos reales de "Monitor IOL Maki"** (Drive): 45
+posiciones abiertas, asignación actual 64.5% RV / 23.9% RF / 11.6% Mixta
+(muy cerca del target 65/20/10). Se confirmó en producción el bug de
+Reentrada de v3.1 — el Radar decía "Sin oportunidades de reentrada por
+ahora" pese a tener movimientos con variación de precio real, señal de que
+la sección nunca disparaba, tal como se sospechaba. También se ve que
+"Alertas Renta Fija" viene vacía ("TIR no disponible en API") — no es un
+bug de este script: la API de IOL simplemente no devuelve `tir`/`rendimiento`
+para esos tickers de ON/Bonos vía `/Cotizacion`; quedaría pendiente
+investigar un endpoint alternativo si se quiere resolver.
+
 ## v3.1 — cambios sobre v3.0 (foco: decisiones de largo plazo)
 
 - **Fix Radar → Reentrada**: la sección de "oportunidades de reentrada" nunca
