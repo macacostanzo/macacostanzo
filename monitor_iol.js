@@ -1,8 +1,19 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.11                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.12                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.12:                                               ║
+ * ║  - Saldo Manual (ARS/USD) en Config: para cuentas de IOL donde ║
+ * ║    /api/v2/estadocuenta rechaza el token incluso recién         ║
+ * ║    obtenido (probablemente falta activar el producto "Estado   ║
+ * ║    de Cuenta" en Mi Cuenta → APIs de invertironline.com), se   ║
+ * ║    puede cargar el saldo a mano como respaldo — Portfolio lo   ║
+ * ║    usa solo si la API no trajo nada.                           ║
+ * ║  - _inicializarConfig() ahora agrega los parámetros que falten ║
+ * ║    a una hoja Config YA EXISTENTE en vez de no hacer nada —    ║
+ * ║    antes, si la hoja ya tenía contenido de una versión previa, ║
+ * ║    los parámetros nuevos nunca le aparecían.                   ║
  * ║  CAMBIOS v3.11:                                               ║
  * ║  - Fix importante: importarMovimientosIOL() detectaba "es USD" ║
  * ║    solo por el sufijo " US$" (Pago de Renta/Dividendos). Una   ║
@@ -159,6 +170,12 @@ function _cargarConfig() {
     emisorAlerta:  RIESGO.EMISOR_ALERTA,
     rebalanceoMin: RIESGO.REBALANCEO_MIN,
     tirRFObjetivo: 0.08,
+    // Fallback manual — para cuando el endpoint de saldo de la API no
+    // funciona para esta cuenta (pasa en algunas cuentas de IOL si el
+    // producto "Estado de Cuenta" no está activado por separado del de
+    // Operaciones). Si la API sí funciona, no hace falta tocar esto.
+    saldoManualARS: 0,
+    saldoManualUSD: 0,
   };
 
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
@@ -174,6 +191,8 @@ function _cargarConfig() {
     'Umbral Emisor Alerta':     'emisorAlerta',
     'Umbral Rebalanceo Min':    'rebalanceoMin',
     'Objetivo TIR Renta Fija':  'tirRFObjetivo',
+    'Saldo Manual ARS':         'saldoManualARS',
+    'Saldo Manual USD':         'saldoManualUSD',
   };
 
   const config = Object.assign({}, defaults);
@@ -186,32 +205,59 @@ function _cargarConfig() {
   return config;
 }
 
+// Catálogo completo de parámetros de Config — [etiqueta, default, nota, formato].
+// Única fuente de verdad: se usa tanto para crear la hoja de cero como
+// para agregarle a una ya existente los parámetros que le falten (nunca
+// pisa lo que ya está cargado/editado a mano).
+const _CONFIG_PARAMS = [
+  ['Target Renta Variable',   0.65, 'Target + Target RF + Target Mixta debería sumar 100%', '0.0%'],
+  ['Target Renta Fija',       0.20, '', '0.0%'],
+  ['Target Renta Mixta',      0.10, '', '0.0%'],
+  ['Umbral Ticker Revisar',   0.15, '% del portfolio en un solo ticker → revisar', '0.0%'],
+  ['Umbral Ticker Alerta',    0.25, '% del portfolio en un solo ticker → alerta fuerte', '0.0%'],
+  ['Umbral Emisor Alerta',    0.20, '% en ONs/Bonos de un mismo emisor', '0.0%'],
+  ['Umbral Rebalanceo Min',   0.03, 'Diferencia mínima vs target para sugerir comprar/vender', '0.0%'],
+  ['Objetivo TIR Renta Fija', 0.08, 'TIR anualizada mínima esperada en USD', '0.0%'],
+  ['Saldo Manual ARS',        0,    'Opcional — se usa solo si el endpoint de saldo de la API falla para esta cuenta', '#,##0.00'],
+  ['Saldo Manual USD',        0,    'Opcional — mismo caso, en dólares', '#,##0.00'],
+];
+
 function _inicializarConfig() {
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
   let   sheet = ss.getSheetByName(HOJAS.CONFIG);
-  if (!sheet) sheet = ss.insertSheet(HOJAS.CONFIG);
-  if (sheet.getLastRow() > 0) return; // no pisar una config ya cargada
+  const esNueva = !sheet;
+  if (esNueva) sheet = ss.insertSheet(HOJAS.CONFIG);
 
-  sheet.getRange(1, 1, 1, 3)
-    .setValues([['Parámetro', 'Valor', 'Nota']])
-    .setBackground('#1a73e8').setFontColor('white')
-    .setFontWeight('bold').setHorizontalAlignment('center');
+  if (esNueva) {
+    sheet.getRange(1, 1, 1, 3)
+      .setValues([['Parámetro', 'Valor', 'Nota']])
+      .setBackground('#1a73e8').setFontColor('white')
+      .setFontWeight('bold').setHorizontalAlignment('center');
 
-  const filas = [
-    ['Target Renta Variable',   0.65, 'Target + Target RF + Target Mixta debería sumar 100%'],
-    ['Target Renta Fija',       0.20, ''],
-    ['Target Renta Mixta',      0.10, ''],
-    ['Umbral Ticker Revisar',   0.15, '% del portfolio en un solo ticker → revisar'],
-    ['Umbral Ticker Alerta',    0.25, '% del portfolio en un solo ticker → alerta fuerte'],
-    ['Umbral Emisor Alerta',    0.20, '% en ONs/Bonos de un mismo emisor'],
-    ['Umbral Rebalanceo Min',   0.03, 'Diferencia mínima vs target para sugerir comprar/vender'],
-    ['Objetivo TIR Renta Fija', 0.08, 'TIR anualizada mínima esperada en USD'],
-  ];
-  sheet.getRange(2, 1, filas.length, 3).setValues(filas);
-  sheet.getRange(2, 2, filas.length, 1).setNumberFormat('0.0%');
-  sheet.setColumnWidth(1, 200);
-  sheet.setColumnWidth(3, 380);
-  sheet.autoResizeColumns(2, 1);
+    sheet.getRange(2, 1, _CONFIG_PARAMS.length, 3)
+      .setValues(_CONFIG_PARAMS.map(p => p.slice(0, 3)));
+    _CONFIG_PARAMS.forEach((p, i) => sheet.getRange(i + 2, 2).setNumberFormat(p[3]));
+
+    sheet.setColumnWidth(1, 200);
+    sheet.setColumnWidth(3, 380);
+    sheet.autoResizeColumns(2, 1);
+    return;
+  }
+
+  // La hoja ya existía (de una versión anterior del script, o editada a
+  // mano) — solo se agregan los parámetros que todavía no estén, igual
+  // que poblarEquivalencias()/poblarRatios() con sus propias listas.
+  const existentes = new Set(
+    sheet.getDataRange().getValues().slice(1)
+      .map(f => String(f[0] || '').trim()).filter(Boolean)
+  );
+  const faltantes = _CONFIG_PARAMS.filter(p => !existentes.has(p[0]));
+  if (faltantes.length === 0) return;
+
+  const startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, faltantes.length, 3)
+    .setValues(faltantes.map(p => p.slice(0, 3)));
+  faltantes.forEach((p, i) => sheet.getRange(startRow + i, 2).setNumberFormat(p[3]));
 }
 
 // ─────────────────────────────────────────────
@@ -1832,6 +1878,11 @@ function _escribirPortfolio(abiertas, cerradas, config) {
 
   let saldoUSD = parseFloat(props.getProperty('saldo_usd') || '0') || 0;
   let saldoARS = parseFloat(props.getProperty('saldo_ars') || '0') || 0;
+
+  // Si la API de saldo no funcionó para esta cuenta (pasa en algunas
+  // cuentas de IOL — ver "Saldo Manual" en Config), usar lo cargado ahí.
+  if (saldoUSD <= 0 && config.saldoManualUSD > 0) saldoUSD = config.saldoManualUSD;
+  if (saldoARS <= 0 && config.saldoManualARS > 0) saldoARS = config.saldoManualARS;
 
   sheet.clearContents();
   sheet.clearFormats();

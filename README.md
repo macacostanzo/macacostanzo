@@ -87,6 +87,26 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.12 — Saldo Manual como respaldo (cuentas donde la API de saldo no anda)
+
+En la cuenta de Trini, `/api/v2/estadocuenta` rechaza el token incluso
+recién obtenido — confirmado con un token 100% fresco (pidió credenciales
+de nuevo y falló igual). No es un bug del script: apunta a que esa cuenta
+no tiene activado el producto de API "Estado de Cuenta" por separado del
+de "Operaciones" (revisar en invertironline.com → Mi Cuenta →
+Personalización → APIs). El resto del script funciona bien sin esto —
+solo afecta "Efectivo Disponible" y "TOTAL PORTFOLIO" en `Portfolio`.
+
+- Nuevos parámetros en **Config**: "Saldo Manual ARS" y "Saldo Manual
+  USD" (por defecto en 0 = no usar). Si la API no trae saldo (`saldo_usd`/
+  `saldo_ars` en 0), `Portfolio` usa estos valores como respaldo. Si la
+  API sí funciona, no hace falta tocarlos.
+- `_inicializarConfig()` dejó de ser "todo o nada": antes, si la hoja
+  Config ya existía (de una versión anterior), la función no hacía nada y
+  los parámetros nuevos nunca le aparecían a nadie que ya la tuviera
+  creada. Ahora agrega solo los que falten, igual que
+  `poblarEquivalencias()`/`poblarRatios()`.
+
 ## v3.11 — fix importante: precios de CEDEARs USD divididos por MEP dos veces
 
 Se reportaron precios absurdamente bajos y variaciones % exageradas en
