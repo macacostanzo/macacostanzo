@@ -1,8 +1,17 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.2                    ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.3                    ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.3:                                               ║
+ * ║  - Detección de splits/canjes de CEDEAR no capturados por    ║
+ * ║    Movimientos: se compara la cantidad calculada contra la   ║
+ * ║    cantidad real que informa HOY la API de IOL (Posiciones,  ║
+ * ║    cols "Cantidad IOL (hoy)" / "⚠️ Revisar Split/Canje").     ║
+ * ║  - El Radar excluye de "Reentrada" los tickers marcados así   ║
+ * ║    (la comparación de precio contra una cantidad vieja daba   ║
+ * ║    variaciones falsas) y los avisa aparte. Caídas >40% que    ║
+ * ║    igual pasan el filtro se marcan "verificar split".         ║
  * ║  CAMBIOS v3.2:                                               ║
  * ║  - Nueva hoja "Config": targets de asignación (RV/RF/Mixta)  ║
  * ║    y umbrales de riesgo/rebalanceo/TIR ahora se leen de la   ║
@@ -614,11 +623,29 @@ function _obtenerPreciosIOL() {
     if (simbolo) preciosARS[simbolo] = parseFloat(activo.ultimoPrecio || 0);
   });
 
+  // Cantidad REAL que informa IOL hoy, resuelta a tickerBase (sumando si el
+  // mismo activo está tenido en ARS y en USD a la vez). Sirve para detectar
+  // splits / cambios de ratio de CEDEAR: si no coincide con lo que da la
+  // suma de movimientos históricos, algo pasó entre la compra y hoy que no
+  // está reflejado en Movimientos (split, canje, ajuste de ratio, etc.).
+  const cantidadIOL = {};
+  portfolio.forEach(activo => {
+    const simboloIOL = String(activo.titulo?.simbolo || '').trim();
+    if (!simboloIOL) return;
+    const eq         = eqMap[simboloIOL] || {};
+    const tickerBase = eq.tickerBase || simboloIOL;
+    // El nombre exacto del campo puede variar según la versión de la API;
+    // se prueban las variantes más comunes antes de descartar el activo.
+    const cant = parseFloat(activo.cantidad ?? activo.cantidadDisponible ?? activo.cantidadValorizada);
+    if (!isNaN(cant)) cantidadIOL[tickerBase] = (cantidadIOL[tickerBase] || 0) + cant;
+  });
+
   // 2. Para cada ticker base, obtener precio USD directo si tiene versión D
   // Si no, usar precioARS / MEP
   const tickersBase = new Set([
     ...Object.keys(preciosARS),
     ...Object.keys(tickerUSDMap),
+    ...Object.keys(cantidadIOL),
   ]);
 
   // Pedir todas las cotizaciones USD directas de una sola vez (batch)
@@ -652,7 +679,10 @@ function _obtenerPreciosIOL() {
       precioUSD = mep > 0 && precioARS > 0 ? precioARS / mep : 0;
     }
 
-    precios[tickerBase] = { precioUSD, precioARS };
+    precios[tickerBase] = {
+      precioUSD, precioARS,
+      cantidadIOL: cantidadIOL[tickerBase] != null ? cantidadIOL[tickerBase] : null,
+    };
   });
 
   return precios;
@@ -1275,6 +1305,15 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
 
   _setHeaders(HOJAS.POSICIONES, hdrs);
 
+  // Cols AD (30) y AE (31): quedan visibles a propósito, DESPUÉS del
+  // bloque de columnas ocultas (W-AC, ver más abajo) para no correr los
+  // índices de columna que usa el resto del código (generarRadar,
+  // Renta_Fija, etc.), que siguen apuntando a W=23..AC=29 igual que antes.
+  sheet.getRange(1, 30, 1, 2)
+    .setValues([['Cantidad IOL (hoy)', '⚠️ Revisar Split/Canje']])
+    .setBackground('#1a73e8').setFontColor('white')
+    .setFontWeight('bold').setHorizontalAlignment('center');
+
   if (abiertas.length === 0) return;
 
   // Ordenar: Renta Variable primero, luego RF; dentro alfabético
@@ -1325,6 +1364,21 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
     // Precio teórico (solo para CEDEARs con ratio y ticker NYSE)
     // Se calculará con GOOGLEFINANCE en fórmula
 
+    // Alerta de split/evento corporativo: compara la cantidad que sale de
+    // sumar los movimientos históricos contra la que informa HOY la propia
+    // API de IOL. Si no coinciden, algo pasó que Movimientos no capturó
+    // (split, canje de CEDEAR por cambio de ratio, etc.) — no se corrige
+    // solo, se muestra para que se confirme a mano.
+    const cantidadIOL = precioData.cantidadIOL;
+    let alertaCantidad = '';
+    if (cantidadIOL != null && cantidadIOL > 0 && pos.cantActual > 0) {
+      const ratioCant = cantidadIOL / pos.cantActual;
+      if (ratioCant > 1.05 || ratioCant < 0.95) {
+        alertaCantidad = `⚠️ IOL: ${cantidadIOL.toFixed(2)} vs calculada: ${pos.cantActual.toFixed(2)}` +
+          ` (x${ratioCant.toFixed(2)}) — revisar split/canje, no fiar Reentrada`;
+      }
+    }
+
     return [
       pos.tickerBase,           // A
       pos.cantActual,           // B
@@ -1355,11 +1409,13 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
       tickerUSD,                // AA oculta
       pos.primeraCompra || '',  // AB oculta
       ratioStr,                 // AC oculta
+      cantidadIOL != null ? cantidadIOL : '',  // AD visible — Cantidad IOL
+      alertaCantidad,                          // AE visible — Alerta split
     ];
   });
 
   const nRows = baseRows.length;
-  sheet.getRange(2, 1, nRows, 29).setValues(baseRows);
+  sheet.getRange(2, 1, nRows, 31).setValues(baseRows);
   // ── Fórmulas fila por fila ────────────────────────────────────────────
   const fMEP = `INDEX(CCL!B:B;MATCH(MAX(CCL!A:A);CCL!A:A;0))`;
 
@@ -1498,7 +1554,18 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
     .setBackground('#d9ead3').setFontColor('#274e13')
     .setRanges([primaRange]).build());
 
+  // Alerta de split/canje (col AE) — resaltar en rojo si hay algo para revisar
+  const alertaCantidadRange = sheet.getRange(2, 31, nRows, 1);
+  reglas.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenTextContains('⚠️')
+    .setBackground('#fce8e6').setFontColor('#a61c00')
+    .setRanges([alertaCantidadRange]).build());
+
   sheet.setConditionalFormatRules(reglas);
+
+  sheet.getRange(2, 30, nRows, 1).setNumberFormat('#,##0.000'); // Cantidad IOL
+  sheet.setColumnWidth(30, 130);
+  sheet.setColumnWidth(31, 420);
 
   // ── Columnas ocultas (U en adelante) ─────────────────────────────────
   sheet.hideColumns(23, 7); // cols W a AC
@@ -2792,6 +2859,18 @@ function generarRadar() {
     if (ticker && precio > 0) precioActualMap[ticker] = precio;
   }
 
+  // Tickers con cantidad IOL ≠ cantidad calculada (col AE, índice 30):
+  // señal de split/canje que Movimientos no capturó. Comparar el precio
+  // histórico contra el precio actual para ESOS tickers da variaciones
+  // falsas (no son una oportunidad real), así que se excluyen de la lista
+  // y se avisan aparte en vez de mezclarlos con oportunidades genuinas.
+  const tickersRevisar = new Set();
+  for (let i = 1; i < posData.length; i++) {
+    const ticker  = String(posData[i][0] || '').trim();
+    const alerta  = String(posData[i][30] || ''); // col AE
+    if (ticker && alerta.includes('⚠️')) tickersRevisar.add(ticker);
+  }
+
   const ultimaOp = {}; // tickerBase -> { fecha, precioUSD, tipo }
   movs.forEach(m => {
     if (!['COMPRA', 'VENTA'].includes(m.tipo)) return;
@@ -2809,6 +2888,8 @@ function generarRadar() {
 
   const reentradas = [];
   Object.entries(ultimaOp).forEach(([tickerBase, op]) => {
+    if (tickersRevisar.has(tickerBase)) return; // posible split → no comparar
+
     const precioActual = precioActualMap[tickerBase] || 0;
     if (!precioActual) return;
 
@@ -2820,27 +2901,47 @@ function generarRadar() {
         precioRef: op.precioUSD,
         precioActual,
         variacion,
+        // Una caída >40% en un solo nombre entre dos operaciones propias es
+        // rara — más probable un split/evento corporativo no detectado por
+        // cantidad (p.ej. si la posición ya se cerró y no queda en
+        // Posiciones para cruzar). Se muestra pero marcada para chequear.
+        sospechosa: variacion <= -0.40,
         tipo: op.tipo
       });
     }
   });
 
-  if (reentradas.length === 0) {
+  if (reentradas.length === 0 && tickersRevisar.size === 0) {
     fila(f, ['Sin oportunidades de reentrada por ahora', '', '', '', ''], C.GRIS);
     f++;
   } else {
     reentradas.sort((a, b) => a.variacion - b.variacion);
     reentradas.forEach(r => {
       const signo = r.variacion >= 0 ? '+' : '';
+      const variacionTxt = signo + (r.variacion * 100).toFixed(1) + '%'
+        + (r.sospechosa ? ' ⚠️ verificar split' : '');
       fila(f, [
         r.ticker,
         r.tipo + ' ' + r.fechaOp,
         'USD ' + r.precioRef.toFixed(2),
         'USD ' + r.precioActual.toFixed(2),
-        signo + (r.variacion * 100).toFixed(1) + '%'
-      ], C.VERDE);
+        variacionTxt
+      ], r.sospechosa ? C.AMARILLO : C.VERDE);
       f++;
     });
+    if (reentradas.length === 0) {
+      fila(f, ['Sin oportunidades de reentrada por ahora', '', '', '', ''], C.GRIS);
+      f++;
+    }
+  }
+
+  if (tickersRevisar.size > 0) {
+    fila(f, [
+      `⚠️ ${tickersRevisar.size} ticker(s) excluidos por posible split/canje: ` +
+        [...tickersRevisar].join(', '),
+      'Ver columna "⚠️ Revisar Split/Canje" en Posiciones', '', '', ''
+    ], C.AMARILLO);
+    f++;
   }
 
   f++;

@@ -14,6 +14,33 @@ una estrategia de inversión de largo plazo.
 4. Primera vez: `📊 Inversiones → ⚙️ Inicializar Hojas`, después
    `🔐 Configurar Acceso IOL`, y finalmente `🔄 Actualizar Todo`.
 
+## v3.3 — detección de splits/canjes de CEDEAR
+
+La sección "Reentrada" del Radar comparaba el precio de tu última compra/venta
+contra el precio actual. Si en el medio hubo un split o un cambio de ratio de
+CEDEAR (que en la práctica se resuelve igual que un split: te acreditan más
+títulos y el precio por título baja proporcionalmente) y ese evento no quedó
+como un movimiento en `Movimientos`, la comparación queda pisada — un CEDEAR
+que en realidad no se movió puede aparecer como una caída de -80%.
+
+- `Posiciones` ahora trae dos columnas nuevas al final: **"Cantidad IOL
+  (hoy)"** (lo que informa la propia API de IOL en este momento) y **"⚠️
+  Revisar Split/Canje"**, que se completa sola cuando esa cantidad no
+  coincide con la que sale de sumar tus movimientos históricos (más de 5%
+  de diferencia).
+- El script **no corrige nada solo** — no adivina el ratio del split ni
+  reescribe la cantidad. Solo lo señala para que se confirme a mano (por
+  ejemplo mirando la cartera real en la app de IOL).
+- El Radar excluye de "Reentrada" los tickers marcados así, y los lista
+  aparte en una fila de aviso. Cualquier otra caída >40% que igual pase el
+  filtro se marca "⚠️ verificar split" en vez de mostrarse como una
+  oportunidad lisa y llana.
+- El campo de cantidad se lee de `/api/portafolio` (`activo.cantidad`, con
+  un par de nombres alternativos como fallback por si la API cambia). Si
+  después de correr "Actualizar Todo" la columna "Cantidad IOL (hoy)" queda
+  vacía para todo, es que el nombre del campo no es el esperado — avisar
+  para ajustarlo.
+
 ## v3.2 — targets/umbrales configurables por planilla
 
 Este monitor lo usan varias personas (Maki, Frank, Trini, ...) con perfiles
