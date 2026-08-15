@@ -1,8 +1,17 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.7                    ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.8                    ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.8:                                               ║
+ * ║  - Nueva hoja "Detalle_Compras": una fila por cada compra      ║
+ * ║    individual (no por ticker) de las posiciones abiertas, con ║
+ * ║    precio pagado vs precio actual y variación % — para ver    ║
+ * ║    cómo viene promediando cada lote, no solo el promedio      ║
+ * ║    agregado que ya muestra Posiciones. Ajusta por split       ║
+ * ║    (misma lógica que Reentrada); en Renta Fija muestra precio ║
+ * ║    de compra vs actual pero sin variación % (amortiza capital,║
+ * ║    no es comparable como en Renta Variable).                  ║
  * ║  CAMBIOS v3.7:                                               ║
  * ║  - _calcularSplitsPorTicker() también detecta splits que      ║
  * ║    llegan como "Transferencia de Titulos IN" sin valor en     ║
@@ -86,6 +95,7 @@ const HOJAS = {
   HISTORIAL:        'Historial',
   FLUJOS_TIR:       'Flujos_TIR',
   CONFIG:           'Config',
+  DETALLE_COMPRAS:  'Detalle_Compras',
 };
 
 const IOL_BASE = 'https://api.invertironline.com';
@@ -1262,6 +1272,7 @@ function calcularPosiciones() {
 
   _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL);
   _escribirHistorial(cerradas, flujosPorTicker);
+  _escribirDetalleCompras(movs, abiertas, preciosIOL);
   _escribirPortfolio(abiertas, cerradas, config);
   _escribirRentaFija(abiertas, config);
   _escribirFlujosTIR(movs);
@@ -2122,6 +2133,132 @@ const sheetNueva = ss.insertSheet(HOJAS.HISTORIAL, idx - 1);
   });
   sheetNueva.setConditionalFormatRules(reglas);
   sheetNueva.autoResizeColumns(1, hdrs.length);
+}
+
+// ─────────────────────────────────────────────
+// ESCRIBIR DETALLE DE COMPRAS
+// Una fila por cada compra individual (no por ticker), con su precio de
+// compra vs el precio actual — para ver cómo viene promediando cada lote,
+// no solo el promedio agregado que ya muestra Posiciones.
+// ─────────────────────────────────────────────
+function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
+  const sheet = _getSheet(HOJAS.DETALLE_COMPRAS);
+  sheet.clearContents();
+  sheet.clearFormats();
+  sheet.clearConditionalFormatRules();
+
+  const hdrs = [
+    'Ticker', 'Clase', 'Fecha Compra', 'Cantidad', 'Precio Compra (USD)',
+    'Precio Actual (USD)', 'Variación %', 'Monto Invertido (USD)',
+    'Valor Actual (USD)', 'G/P (USD)', 'Nota'
+  ];
+  _setHeaders(HOJAS.DETALLE_COMPRAS, hdrs);
+
+  // Solo tickers con posición abierta hoy — el detalle de algo ya cerrado
+  // del todo no ayuda a decidir qué hacer ahora (para eso está Historial).
+  const abiertosSet = new Set(abiertas.map(p => p.tickerBase));
+
+  // Splits detectados (misma lógica que Reentrada) — para ajustar el
+  // precio de cada compra al equivalente post-split, y para no listar la
+  // "Transferencia de Titulos IN" que en realidad es un split como si
+  // fuera una compra a precio $0.
+  const splitsPorTicker = _calcularSplitsPorTicker(movs);
+  const fechasSplit = {}; // tickerBase -> Set de fechas de split
+  Object.entries(splitsPorTicker).forEach(([ticker, splits]) => {
+    fechasSplit[ticker] = new Set(splits.map(s => s.fecha));
+  });
+
+  const filas = [];
+  movs.forEach(m => {
+    if (!['COMPRA', 'SUSCRIPCION_FCI', 'TRANSF_IN'].includes(m.tipo)) return;
+    if (!m.tickerBase || !abiertosSet.has(m.tickerBase)) return;
+    if (m.tipo === 'TRANSF_IN' && (fechasSplit[m.tickerBase] || new Set()).has(m.fecha)) return;
+
+    const cantAbs = Math.abs(m.cantidad);
+    if (!cantAbs) return;
+    const precioCompra = m.precioUSD || (Math.abs(m.montoUSD || 0) / cantAbs);
+    if (!precioCompra) return; // sin precio (ej. transferencia sin costo) no aporta a la comparación
+
+    const factorSplit = _factorSplitDesde(splitsPorTicker, m.tickerBase, m.fecha);
+    const precioCompraAjustado = precioCompra / factorSplit;
+
+    const precioData   = preciosIOL[m.tickerBase] || {};
+    const precioActual = precioData.precioUSD || 0;
+    const esRF          = m.tipoActivo === 'ON' || m.tipoActivo === 'Bono';
+
+    // La variación % solo tiene sentido en Renta Variable — en Renta Fija
+    // el precio baja por amortización de capital, no por estar "más barato"
+    // (mismo motivo por el que Reentrada quedó acotada a Renta Variable).
+    let variacionPct = '';
+    if (m.clase === 'Renta Variable' && precioActual > 0 && precioCompraAjustado > 0) {
+      variacionPct = (precioActual - precioCompraAjustado) / precioCompraAjustado;
+    }
+
+    const montoInvertido = Math.abs(m.montoUSD || 0);
+    let valorActual = '';
+    let gp = '';
+    if (precioActual > 0) {
+      valorActual = esRF ? cantAbs * precioActual / 100 : cantAbs * precioActual;
+      gp = valorActual - montoInvertido;
+    }
+
+    filas.push([
+      m.tickerBase,
+      m.clase || '',
+      m.fecha,
+      cantAbs,
+      precioCompraAjustado,
+      precioActual || '',
+      variacionPct,
+      montoInvertido,
+      valorActual !== '' ? valorActual : '',
+      gp !== '' ? gp : '',
+      factorSplit > 1.001 ? `ajustado x${factorSplit.toFixed(2)} por split` : '',
+    ]);
+  });
+
+  if (filas.length === 0) {
+    sheet.getRange('A2').setValue('No hay compras para mostrar todavía.');
+    return;
+  }
+
+  // Ordenar por ticker y, dentro de cada ticker, por fecha ascendente
+  filas.sort((a, b) => {
+    if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
+    return a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0;
+  });
+
+  const nRows = filas.length;
+  sheet.getRange(2, 1, nRows, hdrs.length).setValues(filas);
+
+  sheet.getRange(2, 4, nRows, 1).setNumberFormat('#,##0.000');
+  sheet.getRange(2, 5, nRows, 2).setNumberFormat('"USD" #,##0.000');
+  sheet.getRange(2, 7, nRows, 1).setNumberFormat('0.00%');
+  sheet.getRange(2, 8, nRows, 3).setNumberFormat('"USD" #,##0.00');
+
+  const reglas = [];
+  [sheet.getRange(2, 7, nRows, 1), sheet.getRange(2, 10, nRows, 1)].forEach(rng => {
+    reglas.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenNumberGreaterThan(0)
+      .setBackground('#d9ead3').setFontColor('#274e13')
+      .setRanges([rng]).build());
+    reglas.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenNumberLessThan(0)
+      .setBackground('#fce8e6').setFontColor('#a61c00')
+      .setRanges([rng]).build());
+  });
+  sheet.setConditionalFormatRules(reglas);
+
+  // Separador visual entre tickers distintos
+  for (let i = 1; i < filas.length; i++) {
+    if (filas[i][0] !== filas[i - 1][0]) {
+      sheet.getRange(i + 2, 1, 1, hdrs.length)
+        .setBorder(true, false, false, false, false, false,
+          '#999999', SpreadsheetApp.BorderStyle.SOLID);
+    }
+  }
+
+  sheet.autoResizeColumns(1, hdrs.length);
 }
 
 // ─────────────────────────────────────────────

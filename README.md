@@ -87,6 +87,27 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.8 — hoja Detalle_Compras (precio de cada compra vs actual)
+
+Pediste de vuelta algo que tenías en monitores anteriores: una pestaña con
+todas las compras históricas, precio de compra vs precio actual, para ver
+cómo venís promediando. `Posiciones` solo muestra el promedio agregado por
+ticker — no el detalle lote por lote.
+
+- Nueva hoja **Detalle_Compras**: una fila por cada compra individual
+  (no por ticker), de las posiciones que siguen abiertas hoy. Columnas:
+  Ticker, Clase, Fecha, Cantidad, Precio Compra, Precio Actual,
+  Variación %, Monto Invertido, Valor Actual, G/P, y una Nota que avisa
+  cuándo el precio de compra se ajustó por un split detectado después de
+  esa compra (misma lógica que ya usa Reentrada).
+- La columna Variación % solo se calcula para **Renta Variable** — en
+  Renta Fija se muestran igual el precio de compra y el actual (son datos
+  factuales útiles), pero sin el %, por el mismo motivo por el que
+  Reentrada quedó acotada a Renta Variable: el precio de un bono/ON baja
+  por amortización de capital, no por estar "más barato".
+- Ordenada por ticker y, dentro de cada ticker, por fecha — con un
+  separador visual entre tickers para que sea fácil de leer de un vistazo.
+
 ## v3.7 — splits que llegan como Transferencia, no como Dividendo
 
 Con datos reales apareció un caso concreto: el ajuste de ratio de CEDEAR de
