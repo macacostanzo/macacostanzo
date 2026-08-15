@@ -1,8 +1,20 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.16                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.17                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.17:                                               ║
+ * ║  - El fix de escala de v3.16 no alcanzaba a todas las ONs: el  ║
+ * ║    chequeo esRF exigía que "Tipo" en Equivalencias fuera        ║
+ * ║    EXACTAMENTE 'ON' o 'Bono' (sensible a mayúsc./espacios).    ║
+ * ║    Nueva _esRF() normaliza antes de comparar, usada en los 4   ║
+ * ║    lugares del script que distinguen Renta Fija.               ║
+ * ║  - Nuevo menú "🔍 Diagnóstico: Clasificación Renta Fija":       ║
+ * ║    encuentra tickers cuya Clase/Tipo "suena a" Renta Fija/ON/  ║
+ * ║    Bono en Equivalencias pero no matchea exacto — esos quedan  ║
+ * ║    afuera de TODO lo específico de Renta Fija sin que se note  ║
+ * ║    a simple vista (precio ×100, exclusión de Reentrada,        ║
+ * ║    Alertas RF, TIR agregada de Portfolio).                     ║
  * ║  CAMBIOS v3.16:                                               ║
  * ║  - Fix: "Precio Prom USD" en Renta Fija quedaba en escala      ║
  * ║    "dólares por unidad nominal" (ej. 0,955) mientras "Precio   ║
@@ -314,6 +326,7 @@ function onOpen() {
     .addItem('🔍 Diagnóstico: Valor Total vs IOL', 'diagnosticarValorTotal')
     .addItem('🔍 Diagnóstico: Movimientos de Cuenta (depósitos/extracciones)', 'diagnosticarMovimientosCuenta')
     .addItem('🔍 Tickers Pendientes',  'verTickersPendientes')
+    .addItem('🔍 Diagnóstico: Clasificación Renta Fija', 'diagnosticarClasificacionRF')
     .addItem('🎯 Generar Radar', 'generarRadar')
     .addToUi();
 }
@@ -1069,6 +1082,16 @@ function _num(val) {
   return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
 }
 
+// Renta Fija cotiza como % del nominal (no como precio absoluto) — hay
+// que tratarla distinto en varios lugares del script. Normaliza mayúsc./
+// minúsc. y espacios para no depender de que "Tipo" en Equivalencias
+// esté tipeado exactamente igual en todas partes (' On', 'bono', etc.
+// no deberían romper esto).
+function _esRF(tipoActivo) {
+  const t = String(tipoActivo || '').trim().toLowerCase();
+  return t === 'on' || t === 'bono';
+}
+
 function _fmtFecha(val) {
   if (!val) return '';
   if (val instanceof Date) {
@@ -1625,6 +1648,59 @@ function verTickersPendientes() {
 }
 
 // ─────────────────────────────────────────────
+// DIAGNÓSTICO — CLASIFICACIÓN RENTA FIJA
+// Busca tickers en Equivalencias donde Clase "suena a" Renta Fija (o
+// Tipo "suena a" ON/Bono) pero no matchea exactamente lo que el resto
+// del script espera ('Renta Fija' / 'ON' / 'Bono') — esos tickers no se
+// tratan como Renta Fija en ningún lado (ni el ×100 de precio, ni la
+// exclusión de Reentrada, ni las Alertas RF), aunque a simple vista
+// parezcan estar bien clasificados.
+// ─────────────────────────────────────────────
+function diagnosticarClasificacionRF() {
+  const ui    = SpreadsheetApp.getUi();
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(HOJAS.EQUIVALENCIAS);
+  if (!sheet) { ui.alert('No existe la hoja "Equivalencias".'); return; }
+
+  const datos = sheet.getDataRange().getValues();
+  const sospechosos = [];
+
+  datos.slice(1).forEach((fila, i) => {
+    const ticker = String(fila[0] || '').trim();
+    if (!ticker) return;
+    const clase = String(fila[5] || '');
+    const tipo  = String(fila[6] || '');
+    const claseNorm = clase.trim().toLowerCase();
+    const tipoNorm   = tipo.trim().toLowerCase();
+
+    const claseSueneARentaFija = claseNorm.includes('fija');
+    const claseOk = claseNorm === 'renta fija';
+    const tipoSueneAON_Bono = tipoNorm.includes('on') || tipoNorm.includes('bono') || tipoNorm.includes('obligaci');
+    const tipoOk = tipoNorm === 'on' || tipoNorm === 'bono';
+
+    if ((claseSueneARentaFija && !claseOk) || (claseOk && tipoSueneAON_Bono && !tipoOk)) {
+      sospechosos.push(
+        `Fila ${i + 2} — ${ticker}: Clase="${clase}" Tipo="${tipo}"` +
+        (claseSueneARentaFija && !claseOk ? '  ⚠️ Clase no es exactamente "Renta Fija"' : '') +
+        (claseOk && tipoSueneAON_Bono && !tipoOk ? '  ⚠️ Tipo no es exactamente "ON" ni "Bono"' : '')
+      );
+    }
+  });
+
+  if (sospechosos.length === 0) {
+    ui.alert('✅ No se encontró ninguna Clase/Tipo de Renta Fija con formato sospechoso en Equivalencias.');
+  } else {
+    ui.alert(
+      `⚠️ ${sospechosos.length} fila(s) en Equivalencias con Clase/Tipo de Renta Fija que no ` +
+      `matchea exactamente lo que el script espera ("Renta Fija" / "ON" / "Bono"):\n\n` +
+      sospechosos.slice(0, 20).join('\n') +
+      (sospechosos.length > 20 ? `\n... y ${sospechosos.length - 20} más.` : '') +
+      '\n\nCorregí el texto exacto de esas celdas y volvé a correr "Actualizar Todo".'
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
 // ESCRIBIR POSICIONES ABIERTAS
 // ─────────────────────────────────────────────
 function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
@@ -1699,7 +1775,7 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
     const ratio      = ratiosMap[pos.tickerBase];
     const ratioStr   = ratio ? `${ratio.num}:${ratio.den}` : '';
     const tickerUSD  = tickerUSDMap[pos.tickerBase] || '';
-    const esRF       = pos.tipoActivo === 'ON' || pos.tipoActivo === 'Bono';
+    const esRF       = _esRF(pos.tipoActivo);
 
     // Precio Prom USD: en Renta Fija, costoActual/cantidad da dólares
     // reales por unidad nominal (ej. 0,955) — pero "Precio USD" (la
@@ -1798,7 +1874,7 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
   abiertas.forEach((pos, i) => {
     const r      = i + 2;
     const ratio  = ratiosMap[pos.tickerBase];
-    const esRF   = pos.tipoActivo === 'ON' || pos.tipoActivo === 'Bono';
+    const esRF   = _esRF(pos.tipoActivo);
 
     // Col N: % Portfolio
     sheet.getRange(r, 14).setFormula(
@@ -1860,7 +1936,7 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
       );
 
     } else if (pos.clase === 'Renta Fija' &&
-               (pos.tipoActivo === 'ON' || pos.tipoActivo === 'Bono')) {
+               _esRF(pos.tipoActivo)) {
       // ONs y Bonos: comparar precio ARS/MEP vs precio USD directo
       sheet.getRange(r, 20).setFormula(
         `=IFERROR(IF(AND(E${r}<>"";F${r}<>"";${fMEP}<>0);` +
@@ -2454,7 +2530,7 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
 
     const precioData   = preciosIOL[m.tickerBase] || {};
     const precioActual = precioData.precioUSD || 0;
-    const esRF          = m.tipoActivo === 'ON' || m.tipoActivo === 'Bono';
+    const esRF          = _esRF(m.tipoActivo);
 
     // La variación % solo tiene sentido en Renta Variable — en Renta Fija
     // el precio baja por amortización de capital, no por estar "más barato"

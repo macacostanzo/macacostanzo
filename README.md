@@ -87,6 +87,28 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.17 — el fix de v3.16 no alcanzaba a todas las ONs
+
+Se reportó que seguía mal en otras obligaciones negociables (ej. Precio
+Prom USD 14,96 vs Precio USD 110,4 — ni de cerca comparables) y que la
+TIR de Renta Fija en Portfolio seguía en 88%. Causa: el chequeo
+`pos.tipoActivo === 'ON' || pos.tipoActivo === 'Bono'` exigía un match
+EXACTO (sensible a mayúsculas/minúsculas y espacios) contra la columna
+"Tipo" de `Equivalencias`. Si esa celda dice, por ejemplo, `'on'`, `'ON '`
+o algo ligeramente distinto, el ticker deja de tratarse como Renta Fija
+en TODOS lados a la vez: no se le aplica el ×100 de precio, no se excluye
+de Reentrada, no entra en Alertas RF — y su valor mal escalado infla la
+TIR agregada de Renta Fija en Portfolio (que suma el valor de todas las
+posiciones de esa clase).
+
+- Nueva función `_esRF(tipoActivo)`: normaliza mayúsculas/espacios antes
+  de comparar. Reemplaza los 4 chequeos exactos que había sueltos en el
+  script (Posiciones, fórmula de Conviene Operar, Detalle_Compras).
+- Nuevo menú **🔍 Diagnóstico: Clasificación Renta Fija**: revisa
+  `Equivalencias` buscando tickers cuya Clase "suena a" Renta Fija o
+  cuyo Tipo "suena a" ON/Bono pero no matchea exacto — para encontrar el
+  ticker puntual sin tener que revisarlos uno por uno a mano.
+
 ## v3.16 — fix escala de Precio Prom USD en Renta Fija
 
 Se reportó que en Renta Fija "Precio Prom USD" y "Precio USD" no eran
