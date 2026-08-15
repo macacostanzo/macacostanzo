@@ -14,6 +14,28 @@ una estrategia de inversión de largo plazo.
 4. Primera vez: `📊 Inversiones → ⚙️ Inicializar Hojas`, después
    `🔐 Configurar Acceso IOL`, y finalmente `🔄 Actualizar Todo`.
 
+## v3.6 (en curso) — camino a automatizar depósitos/extracciones
+
+Hoy `importarMovimientosIOL()` solo consulta `/api/operaciones`, que trae
+operaciones de mercado (compras, ventas, pagos de renta/dividendos) — **no**
+depósitos ni extracciones, porque esos son movimientos de cuenta, no
+operaciones. Por eso siguen necesitando carga manual en `Ingresos_Egresos`.
+
+Se confirmó con datos reales (vía un conector de IOL disponible en la
+sesión de análisis) que la API de IOL sí expone depósitos/extracciones,
+solo que en un endpoint distinto al que usa el script hoy. Se agregó
+**"🔍 Diagnóstico: Movimientos de Cuenta"** en el menú: prueba varios
+endpoints candidatos (`/api/v2/estadocuenta`,
+`/api/v2/estadocuenta/movimientos`, `/api/v2/movimientos`,
+`/api/movimientos`) y muestra cuál responde con datos, para poder
+confirmar el endpoint real antes de escribir la importación automática
+(sin adivinar en el código de producción).
+
+**Pendiente**: correr el diagnóstico, confirmar el endpoint correcto, y
+extender `importarMovimientosIOL()` (o agregar una función nueva) para
+traer depósitos/extracciones automáticamente. `Ingresos_Egresos` quedaría
+como respaldo solo para lo que la API no capture.
+
 ## v3.5 — Reentrada restringida a Renta Variable
 
 Con datos reales apareció el motivo por el que ni el ajuste de split de v3.4

@@ -1,8 +1,14 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.5                    ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.6                    ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.6:                                               ║
+ * ║  - /api/operaciones NO trae depósitos/extracciones (son       ║
+ * ║    movimientos de cuenta, no operaciones de mercado) — por    ║
+ * ║    eso hoy se cargan a mano en Ingresos_Egresos. Nuevo menú   ║
+ * ║    "Diagnóstico: Movimientos de Cuenta" que prueba endpoints  ║
+ * ║    candidatos para ubicar ese dato y poder automatizarlo.     ║
  * ║  CAMBIOS v3.5:                                               ║
  * ║  - Reentrada ahora es SOLO Renta Variable. En Renta Fija/ONs  ║
  * ║    el precio baja por amortización de capital según           ║
@@ -171,6 +177,7 @@ function onOpen() {
     .addItem('⚙️ Inicializar Hojas',         'inicializarHojas')
     .addItem('🎛️ Ver/Editar Config (targets y riesgo)', 'abrirConfig')
     .addItem('⚙️ Diagnostico',         'diagnosticarPosiciones')
+    .addItem('🔍 Diagnóstico: Movimientos de Cuenta (depósitos/extracciones)', 'diagnosticarMovimientosCuenta')
     .addItem('🔍 Tickers Pendientes',  'verTickersPendientes')
     .addItem('🎯 Generar Radar', 'generarRadar')
     .addToUi();
@@ -2629,6 +2636,43 @@ datos.slice(1).forEach(fila => {
   }
 }
 
+
+// ─────────────────────────────────────────────
+// DIAGNÓSTICO — MOVIMIENTOS DE CUENTA (depósitos/extracciones)
+// /api/operaciones NO trae depósitos/extracciones (son movimientos de
+// cuenta, no operaciones de mercado) — por eso hoy se cargan a mano en
+// Ingresos_Egresos. Este diagnóstico prueba varios endpoints candidatos
+// para encontrar dónde vive ese dato y así poder automatizarlo.
+// ─────────────────────────────────────────────
+function diagnosticarMovimientosCuenta() {
+  const ui = SpreadsheetApp.getUi();
+  const candidatos = [
+    '/api/v2/estadocuenta',
+    '/api/v2/estadocuenta/movimientos',
+    '/api/v2/movimientos',
+    '/api/movimientos',
+  ];
+
+  const resultados = [];
+  candidatos.forEach(ep => {
+    try {
+      const data = _fetchIOL(ep);
+      const texto = JSON.stringify(data);
+      resultados.push(`✅ ${ep}\n${texto.substring(0, 600)}${texto.length > 600 ? '…' : ''}`);
+    } catch(e) {
+      resultados.push(`❌ ${ep}\n${e.message.substring(0, 150)}`);
+    }
+  });
+
+  const mensaje = resultados.join('\n\n─────────────\n\n');
+  Logger.log(mensaje);
+  ui.alert(
+    '🔍 Diagnóstico: movimientos de cuenta\n\n' +
+    'Se probaron ' + candidatos.length + ' endpoints. Detalle completo en\n' +
+    'Extensiones → Apps Script → Ejecuciones (o Ver → Registros).\n\n' +
+    mensaje.substring(0, 1200)
+  );
+}
 
 function diagnosticarPosiciones() {
   const ui = SpreadsheetApp.getUi();
