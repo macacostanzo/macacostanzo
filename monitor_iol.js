@@ -1,8 +1,18 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.18                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.19                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.19:                                               ║
+ * ║  - Encontrada la causa real de TLCMO/TLCTO: dos filas en       ║
+ * ║    Movimientos con el mismo Nro. de Mov. + Boleto (misma       ║
+ * ║    compra pegada dos veces) con Montos distintos — una         ║
+ * ║    incompleta, otra correcta. procesarMovimientos() se queda   ║
+ * ║    con "la primera que diga Dólares" sin chequear cuál es      ║
+ * ║    correcta, así que la fila mala podía ganar en silencio.     ║
+ * ║  - Nuevo menú "🔍 Diagnóstico: Movimientos Duplicados":         ║
+ * ║    encuentra TODOS los Nro. de Mov. con más de una fila y      ║
+ * ║    Montos que no coinciden, en toda la hoja Movimientos.       ║
  * ║  CAMBIOS v3.18:                                               ║
  * ║  - Nuevo menú "🔍 Diagnóstico: Ticker Puntual": pide un ticker  ║
  * ║    y vuelca de una sola vez sus filas de Equivalencias (más    ║
@@ -336,6 +346,7 @@ function onOpen() {
     .addItem('🔍 Tickers Pendientes',  'verTickersPendientes')
     .addItem('🔍 Diagnóstico: Clasificación Renta Fija', 'diagnosticarClasificacionRF')
     .addItem('🔍 Diagnóstico: Ticker Puntual', 'diagnosticarTicker')
+    .addItem('🔍 Diagnóstico: Movimientos Duplicados', 'diagnosticarMovimientosDuplicados')
     .addItem('🎯 Generar Radar', 'generarRadar')
     .addToUi();
 }
@@ -1770,6 +1781,67 @@ function diagnosticarTicker() {
       (mensaje.length > 1500 ? '\n\n(...) ver el resto en Ejecuciones' : ''));
   } catch(e) {
     ui.alert('❌ Error: ' + e.message + '\n' + e.stack);
+  }
+}
+
+// ─────────────────────────────────────────────
+// DIAGNÓSTICO — MOVIMIENTOS DUPLICADOS CON DATOS DISTINTOS
+// Caso real encontrado: dos filas con el mismo Nro. de Mov. + Boleto
+// (probablemente de dos pegadas manuales que se superpusieron), una con
+// el Monto correcto y otra con un Monto incompleto/mal armado. Como
+// procesarMovimientos() agrupa por Nro. de Mov. y ante un empate se
+// queda con "la primera que diga Dólares" sin chequear cuál es
+// correcta, la fila mala puede terminar ganando en silencio. Esto
+// busca TODOS los grupos con más de una fila y Montos que no coinciden.
+// ─────────────────────────────────────────────
+function diagnosticarMovimientosDuplicados() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetMov = ss.getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sheetMov) { ui.alert('No existe la hoja "Movimientos".'); return; }
+
+  const raw = sheetMov.getDataRange().getValues();
+  let hFila = 0;
+  for (let i = 0; i < Math.min(raw.length, 10); i++) {
+    const filaStr = raw[i].map(c => String(c)).join('|');
+    if (filaStr.includes('Nro') && filaStr.includes('Tipo Mov')) { hFila = i; break; }
+  }
+  const headers = raw[hFila].map(h => String(h).trim());
+  const col = (prefijo) => headers.findIndex(h => h.startsWith(prefijo));
+  const C = { nroMov: col('Nro. de Mov'), tipo: col('Tipo Mov'), monto: col('Monto'), cuenta: col('Tipo Cuenta') };
+
+  const porNroMov = {};
+  for (let i = hFila + 1; i < raw.length; i++) {
+    const nro = String(raw[i][C.nroMov] || '').trim();
+    if (!nro || nro === '0') continue;
+    if (!porNroMov[nro]) porNroMov[nro] = [];
+    porNroMov[nro].push({ fila: i + 1, tipo: raw[i][C.tipo], monto: _num(raw[i][C.monto]), cuenta: raw[i][C.cuenta] });
+  }
+
+  const sospechosos = [];
+  Object.entries(porNroMov).forEach(([nro, grupo]) => {
+    if (grupo.length < 2) return;
+    const montos = grupo.map(g => Math.abs(g.monto));
+    const max = Math.max(...montos), min = Math.min(...montos);
+    // Diferencia real, no solo redondeo/formato
+    if (max - min > Math.max(0.5, max * 0.02)) {
+      sospechosos.push(
+        `Nro. de Mov. ${nro} (${grupo[0].tipo}):\n` +
+        grupo.map(g => `  Fila ${g.fila}: Monto=${g.monto} | ${g.cuenta}`).join('\n')
+      );
+    }
+  });
+
+  if (sospechosos.length === 0) {
+    ui.alert('✅ No se encontraron movimientos duplicados con Montos inconsistentes.');
+  } else {
+    const mensaje =
+      `⚠️ ${sospechosos.length} Nro. de Mov. con más de una fila y Montos que no coinciden ` +
+      `(revisar cuál es la correcta contra tu comprobante de IOL y borrar la otra):\n\n` +
+      sospechosos.join('\n\n');
+    Logger.log(mensaje);
+    ui.alert('🔍 Diagnóstico: Movimientos Duplicados\n\n' + mensaje.substring(0, 1500) +
+      (mensaje.length > 1500 ? '\n\n(...) ver el resto en Ejecuciones' : ''));
   }
 }
 

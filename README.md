@@ -87,6 +87,36 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.19 — causa real de TLCMO: filas duplicadas con Monto distinto
+
+Con el diagnóstico de ticker puntual (v3.18) se encontró la causa real:
+dos filas en `Movimientos` con el **mismo Nro. de Mov. y Boleto**
+(110047728 — la misma compra pegada dos veces, probablemente de dos
+pegadas manuales que se superpusieron), con Montos distintos:
+
+- Fila 1: Monto = -113,50 (mal — "Otros Imp." tiene 113,5 en vez de la
+  comisión real)
+- Fila 2: Monto = -1.121,10 = 1000 × 111 ÷ 100 (principal) + 11,10
+  (comisión) — esta es la correcta
+
+`procesarMovimientos()` agrupa por Nro. de Mov. para no procesar la
+misma operación dos veces, pero cuando hay más de una fila para el mismo
+número se queda con "la primera que diga Dólares" sin chequear cuál es
+la correcta — así la fila mala (113,50) ganó en silencio, dejando el
+costo ~10 veces más chico de lo real. Eso explicaba tanto el precio
+incomparable como la TIR de Renta Fija en 88% (comprar algo a $113 que
+"vale" $1.134 es una ganancia de 10x que en realidad nunca pasó).
+
+- Nuevo menú **🔍 Diagnóstico: Movimientos Duplicados**: recorre TODA la
+  hoja Movimientos agrupando por Nro. de Mov., y reporta cualquier grupo
+  con más de una fila y Montos que no coinciden — para encontrar otros
+  casos similares (con cualquier ticker) antes de que aparezcan como un
+  número raro en Posiciones o Portfolio.
+- **Corrección manual necesaria**: borrar la fila con el Monto
+  incorrecto de cada duplicado que aparezca — el diagnóstico solo
+  detecta y reporta, no corrige solo (para no arriesgarse a borrar la
+  fila que en realidad era la correcta).
+
 ## v3.18 — diagnóstico de ticker puntual (TLCMO/TLCTO seguían mal)
 
 Se reportó que TLCMO/TLCTO en `Posiciones` seguían con Precio Prom vs
