@@ -87,6 +87,46 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.22 — fix Costo Prom. MELI (y similares): v3.20 sumaba de más
+
+Reporte: "Precio promedio de compra dice en IOL que es de 16,16 no 24,77
+que dice la planilla [...] Hay un error grande al operar en diferentes
+monedas una misma empresa. No sé si fue la herramienta de reparar
+Ticker_Base o reparar Tipo Cuenta".
+
+**Investigación**: se descartó que fuera "reparar Ticker_Base" (MELI/MELID
+ya tenían Ticker_Base consistente, nada para corregir ahí) y "reparar Tipo
+Cuenta" (MELI es ARS, MELID es USD en Equivalencias — ningún movimiento de
+MELI quedaba mal clasificado por esa herramienta). Comparando dos
+descargas de la misma planilla en momentos distintos, el Costo Prom. de
+MELI (mismas 140 unidades en ambas) saltó de **USD 14,76 a USD 24,77**
+entre una y otra — la diferencia coincide en el tiempo con el fix v3.20
+("sumar todas las filas del mismo Nro. de Mov.").
+
+Mirando los movimientos reales de MELID, apareció un segundo patrón
+distinto al de TLCMO (que sí era una comisión legítima, ~10% del monto
+principal): pares de filas con la MISMA Cantidad y el MISMO Precio, pero
+Montos de magnitud COMPARABLE entre sí (ej. -289,46 y -244,84 para la
+misma compra de 20 títulos) — no es un principal + una comisión chica, es
+otra cosa (probablemente una particularidad de cómo IOL exporta fills
+múltiples para estos montos chicos en dólares). Sumar ambas filas duplicaba
+el costo de esa operación.
+
+Se analizó la distribución de |fila secundaria| / |fila principal| en las
+3 planillas reales: **334 filas caen entre 0% y 20%** (comisiones/impuestos
+reales, como TLCMO) y **225 filas caen entre 70% y 100%+** (este patrón
+tipo MELID) — con un hueco completamente vacío entre 20% y 70%. Es una
+distribución bimodal limpia, no un continuo, así que hay un corte natural
+y seguro en el medio.
+
+**Fix**: `procesarMovimientos()` ahora suma una fila secundaria solo si su
+|Monto| es ≤30% del |Monto| de la fila principal del grupo (ese 30% queda
+cómodo en el hueco vacío de la distribución real). Lo que no entra en ese
+rango se descarta y se usa solo el Monto de la fila principal — que es
+como funcionaba antes de v3.20, y que para MELID da un Costo Prom. de
+USD 15,76 (mucho más cerca de los USD 16,16 reales de IOL que los 24,77
+que mostraba antes de este fix).
+
 ## v3.21 — fix TIR Renta Fija ~87%: GD29 traía Precio/Monto en pesos etiquetados como dólares
 
 Reporte: en Posiciones todo se veía bien, pero en Portfolio "TIR por clase"

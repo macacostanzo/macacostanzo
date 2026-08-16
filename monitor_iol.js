@@ -1,8 +1,20 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.21                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.22                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.22:                                               ║
+ * ║  - Fix Costo Prom. de MELI (y cualquier ticker con el mismo    ║
+ * ║    patrón): v3.20 sumaba TODAS las filas de un mismo Nro. de   ║
+ * ║    Mov., pero con datos reales apareció un segundo patrón      ║
+ * ║    (MELID): pares de filas con la MISMA cantidad/precio pero   ║
+ * ║    Montos de magnitud COMPARABLE (no una comisión chica) —     ║
+ * ║    sumarlas duplicaba el costo. Costo Prom. de MELI saltó de   ║
+ * ║    USD 14,76 a USD 24,77 vs. los USD 16,16 reales de IOL. La   ║
+ * ║    distribución real (3 planillas) es limpiamente bimodal:     ║
+ * ║    comisiones caen en 0-20% del monto principal, "duplicados"  ║
+ * ║    caen en 70-100%+, hueco vacío entre medio. Ahora solo se    ║
+ * ║    suma lo que cae bajo 30% del monto principal.                ║
  * ║  CAMBIOS v3.21:                                               ║
  * ║  - Fix del TIR de Renta Fija ~87%: GD29 en esta cuenta no      ║
  * ║    tiene par "GD29D" — TODAS sus filas en Movimientos vienen   ║
@@ -1391,10 +1403,23 @@ for (let i = 0; i < Math.min(raw.length, 10); i++) {
     // comisión/impuesto en otra, ambas en la misma moneda), NO son
     // duplicados — son partes reales del mismo trade. Elegir solo "la
     // primera que diga Dólares" y descartar el resto perdía la otra
-    // parte (a veces el 99% del monto real). Ahora se suman todas las
-    // filas de la moneda predominante del grupo (Dólares si hay alguna,
-    // si no Pesos), y la fila "principal" (de la que sale Cant./Precio)
-    // es la de mayor cantidad de títulos — o, si empatan, mayor |Monto|.
+    // parte (a veces el 99% del monto real). La fila "principal" (de la
+    // que sale Cant./Precio) es la de mayor cantidad de títulos — o, si
+    // empatan, mayor |Monto|.
+    //
+    // v3.22: sumar TODAS las filas del grupo (como hacía v3.20) resultó
+    // ser demasiado agresivo. Con datos reales (MELID en la cuenta de
+    // Maki) apareció un segundo patrón: pares de filas con la MISMA
+    // cantidad/precio pero Montos de magnitud COMPARABLE (no una
+    // comisión chica) — sumarlas duplicaba el costo (Costo Prom. de MELI
+    // saltó de USD 14,76 a USD 24,77 vs. los USD 16,16 reales de IOL).
+    // Con las 3 planillas reales, la distribución de |fila secundaria| /
+    // |fila principal| es limpiamente bimodal: comisiones/impuestos caen
+    // en 0-20% (334 casos), filas "duplicadas" caen en 70-100%+ (225
+    // casos) — hueco vacío entre 20% y 70%. Se suma solo lo que cae por
+    // debajo del corte; lo demás se descarta (se queda con filaMain sola,
+    // que es como funcionaba antes de v3.20 y coincidía con IOL).
+    const UMBRAL_COMISION = 0.3; // fracción de |monto principal|
     const esUSDFila  = f => String(f[C.cuenta] || '').includes('Dolares') || String(f[C.cuenta] || '').includes('Dólares');
     const filasUSD   = grupo.filter(esUSDFila);
     const candidatas = filasUSD.length > 0 ? filasUSD : grupo;
@@ -1407,7 +1432,12 @@ for (let i = 0; i < Math.min(raw.length, 10); i++) {
       else if (cantF === cantMain && Math.abs(_num(f[C.monto])) > Math.abs(_num(filaMain[C.monto]))) filaMain = f;
     });
 
-    const montoTotal = candidatas.reduce((s, f) => s + _num(f[C.monto]), 0);
+    const montoMain   = Math.abs(_num(filaMain[C.monto]));
+    const montoTotal  = candidatas.reduce((s, f) => {
+      if (f === filaMain) return s + _num(f[C.monto]);
+      const esComision = montoMain > 0 && Math.abs(_num(f[C.monto])) / montoMain <= UMBRAL_COMISION;
+      return esComision ? s + _num(f[C.monto]) : s;
+    }, 0);
 
     const estado = String(filaMain[C.estado] || '');
     if (!estado.includes('Terminada')) return;
