@@ -87,6 +87,56 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.21 — fix TIR Renta Fija ~87%: GD29 traía Precio/Monto en pesos etiquetados como dólares
+
+Reporte: en Posiciones todo se veía bien, pero en Portfolio "TIR por clase"
+seguía mostrando Renta Fija ≈ 87% — un valor imposible como retorno anual.
+
+**Investigación**: se descargó la planilla real y se recorrió `Flujos_TIR`
+buscando el flujo que más pesaba. Apareció uno de US$129.191,26 el
+2025-05-30 — más de 13 veces el valor total actual de Renta Fija en la
+cuenta. Se rastreó hasta Movimientos: `Venta(GD29)`, Cantidad=146,
+Precio=89.390, Comisión=1.305,09, Monto=129.191,26, Tipo Cuenta="Inversion
+Argentina Dolares". Maki confirmó estos números contra el comprobante real
+de IOL (3 boletos por 100+3+43 títulos, mismo precio y comisión) — los
+datos en la planilla son fieles a lo que IOL registró.
+
+El problema no es un error de tipeo: es que **GD29 en esta cuenta no tiene
+contraparte "GD29D"** (a diferencia de AL29/AL29D, AL30/AL30D, GD30/GD30D,
+que sí reparten sus operaciones entre un ticker en pesos y uno en dólares
+según corresponda). Todas las filas de GD29 vienen etiquetadas "Inversion
+Argentina Dolares" — pero Precio y Monto están en PESOS. Se confirmó
+reconstruyendo, para cada operación, el % de la par implícito (Precio ÷
+MEP histórico de esa fecha ÷ 100):
+
+| Fecha       | Precio (ARS) | MEP      | % de la par implícito |
+|-------------|-------------:|---------:|-----------------------:|
+| 2021-06-17  | 6.990        | 164,03   | 42,6% |
+| 2021-06-29  | 6.500        | 165,69   | 39,2% |
+| 2022-06-30  | 6.100        | 252,71   | 24,1% |
+| 2023-08-11  | 21.100       | 601,24   | 35,1% |
+| 2025-05-30  | 89.390       | 1.204,92 | 74,2% |
+
+Esa curva (42%→39%→32%→24%→27%→35%→**74%** entre 2021 y 2025) calca la
+cotización real del Bonar 2029: piso durante la crisis de 2022, recuperación
+post-elecciones 2023, y rally fuerte 2024-2025. Tomando Precio/Monto como
+dólares directos, en cambio, la venta de 2025-05-30 quedaba contabilizada
+como **US$129.191** en vez de los ~US$107 reales (129.191,26 ÷ 1.204,92) —
+un solo flujo mal escalado por ~1.205x (justo el MEP de esa fecha, la
+huella típica de "faltó dividir por el MEP") que alcanzaba para inflar todo
+el XIRR de Renta Fija a niveles imposibles.
+
+Se descartó que fuera un problema genérico de "todo ticker sin par D es
+peso" — se comparó contra PBA25 (otro ON sin contraparte "D" en esta misma
+cuenta) y ahí Precio/Monto sí están correctamente en dólares (84-101%, ya
+usables tal cual). El fix es puntual a GD29, con la evidencia dejada como
+comentario en el código.
+
+**Fix**: en `procesarMovimientos()`, GD29 queda excluido de la detección de
+moneda por "Tipo Cuenta" y se convierte por MEP como cualquier operación en
+pesos. Si en el futuro aparece un "GD29D" operado, hay que sacar la
+excepción y dejar que el Ticker_Base distinga los pares como con AL29/AL30.
+
 ## v3.20 — fix de fondo: operaciones partidas en varias filas se sumaban mal
 
 El diagnóstico de v3.19 encontró **252 casos**, no uno solo — descarta la

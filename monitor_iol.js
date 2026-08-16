@@ -1,8 +1,21 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.20                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.21                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.21:                                               ║
+ * ║  - Fix del TIR de Renta Fija ~87%: GD29 en esta cuenta no      ║
+ * ║    tiene par "GD29D" — TODAS sus filas en Movimientos vienen   ║
+ * ║    etiquetadas "Inversion Argentina Dolares" pero Precio/Monto ║
+ * ║    están en PESOS. Confirmado reconstruyendo el % de la par    ║
+ * ║    implícito con el MEP histórico de cada fecha: curva         ║
+ * ║    42%→39%→32%→24%→27%→35%→74% (2021→2025), calcada al Bonar   ║
+ * ║    2029 real. Tomado como USD directo, la venta del 30/5/2025  ║
+ * ║    (146 títulos) quedaba contabilizada como US$129.191 en vez  ║
+ * ║    de los ~US$107 reales — un solo flujo mal escalado que      ║
+ * ║    inflaba todo el XIRR de Renta Fija. procesarMovimientos()   ║
+ * ║    ahora excluye a GD29 de la detección de moneda por Tipo     ║
+ * ║    Cuenta y la convierte por MEP como cualquier ticker en ARS. ║
  * ║  CAMBIOS v3.20:                                               ║
  * ║  - Fix importante y de fondo: el diagnóstico de v3.19          ║
  * ║    encontró 252 casos (no 1) de operaciones partidas por IOL   ║
@@ -1407,7 +1420,18 @@ for (let i = 0; i < Math.min(raw.length, 10); i++) {
     const precio    = _num(filaMain[C.precio]);
     const monto     = montoTotal;
     const cuentaTxt = String(filaMain[C.cuenta] || '');
-    const esUSD     = cuentaTxt.includes('Dolares') || cuentaTxt.includes('Dólares');
+    // Tipo Cuenta = "Dolares" normalmente indica que Precio/Monto ya están
+    // en USD. EXCEPCIÓN CONFIRMADA: GD29 en esta cuenta no tiene contraparte
+    // "GD29D" — todas sus filas vienen etiquetadas "Inversion Argentina
+    // Dolares" pero Precio/Monto están en PESOS (se corroboró reconstruyendo
+    // el % de la par implícito con el MEP histórico de cada fecha: da una
+    // curva 42%→39%→32%→24%→27%→35%→74% entre 2021 y 2025, calcada a la
+    // cotización real del Bonar 2029; tomado como USD directo, en cambio,
+    // la venta de 2025-05-30 quedaba en 89.390 USD -imposible- en vez de
+    // ~107 USD). Si en el futuro aparece un GD29D operado, sacar esta
+    // excepción y dejar que el Ticker_Base distinga los pares como siempre.
+    const esUSDExcepcion = (ticker === 'GD29');
+    const esUSD     = !esUSDExcepcion && (cuentaTxt.includes('Dolares') || cuentaTxt.includes('Dólares'));
     const mep       = _getCCL(fecha, mepMap);
 
     let montoUSD = null;
