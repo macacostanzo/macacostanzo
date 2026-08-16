@@ -87,6 +87,35 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.20 — fix de fondo: operaciones partidas en varias filas se sumaban mal
+
+El diagnóstico de v3.19 encontró **252 casos**, no uno solo — descarta la
+teoría de "duplicado por error". El patrón es sistemático: IOL parte
+muchas operaciones en más de una fila bajo el mismo Nro. de Mov. —
+importe principal en una fila, comisión/impuesto en otra, misma moneda,
+signos coherentes entre sí (ej. venta: principal positivo + comisión
+negativa). Esto incluye el caso de TLCMO reportado antes — **no era una
+fila mala, probablemente eran dos partes reales del mismo trade** (se
+retira la recomendación anterior de borrar esa fila).
+
+- `procesarMovimientos()` agrupaba por Nro. de Mov. y, ante más de una
+  fila, se quedaba con "la primera que diga Dólares" **descartando el
+  resto** — a veces perdiendo la parte más grande del monto real (como
+  en TLCMO, donde solo se usaba la comisión y se perdía el principal).
+  Ahora se **suman** todas las filas de la moneda predominante del
+  grupo (Dólares si hay alguna, si no Pesos); la fila "principal" (de
+  la que salen Cantidad y Precio) es la de mayor cantidad de títulos.
+- El diagnóstico correspondiente pasó de "Movimientos Duplicados" a
+  **"Operaciones Partidas en Varias Filas"** y cambió de tono: ya no
+  sugiere borrar nada (el código las suma solo), queda como lista
+  informativa para espiar algún caso con una diferencia inusualmente
+  grande entre las partes.
+
+**Impacto esperado**: con 252 operaciones afectadas, correr "Actualizar
+Todo" con esta versión probablemente cambie costos, G/P y TIR en varias
+posiciones (para mejor — hacia el valor correcto). Es normal ver números
+distintos a los de antes.
+
 ## v3.19 — causa real de TLCMO: filas duplicadas con Monto distinto
 
 Con el diagnóstico de ticker puntual (v3.18) se encontró la causa real:

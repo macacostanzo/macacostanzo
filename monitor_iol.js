@@ -1,8 +1,21 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.19                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.20                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.20:                                               ║
+ * ║  - Fix importante y de fondo: el diagnóstico de v3.19          ║
+ * ║    encontró 252 casos (no 1) de operaciones partidas por IOL   ║
+ * ║    en más de una fila bajo el mismo Nro. de Mov. — importe     ║
+ * ║    principal en una fila, comisión/impuesto en otra, misma     ║
+ * ║    moneda. No eran duplicados por error: procesarMovimientos() ║
+ * ║    elegía UNA fila y descartaba la otra, perdiendo a veces la  ║
+ * ║    parte más grande del monto real. Ahora SUMA todas las filas ║
+ * ║    de la moneda predominante del grupo, en vez de descartar.   ║
+ * ║  - El diagnóstico "Operaciones Partidas en Varias Filas"       ║
+ * ║    (antes "Movimientos Duplicados") pasa a ser informativo:    ║
+ * ║    ya no sugiere borrar filas, solo lista para espiar casos    ║
+ * ║    puntuales con una diferencia inusualmente grande.           ║
  * ║  CAMBIOS v3.19:                                               ║
  * ║  - Encontrada la causa real de TLCMO/TLCTO: dos filas en       ║
  * ║    Movimientos con el mismo Nro. de Mov. + Boleto (misma       ║
@@ -346,7 +359,7 @@ function onOpen() {
     .addItem('🔍 Tickers Pendientes',  'verTickersPendientes')
     .addItem('🔍 Diagnóstico: Clasificación Renta Fija', 'diagnosticarClasificacionRF')
     .addItem('🔍 Diagnóstico: Ticker Puntual', 'diagnosticarTicker')
-    .addItem('🔍 Diagnóstico: Movimientos Duplicados', 'diagnosticarMovimientosDuplicados')
+    .addItem('🔍 Diagnóstico: Operaciones Partidas en Varias Filas', 'diagnosticarMovimientosDuplicados')
     .addItem('🎯 Generar Radar', 'generarRadar')
     .addToUi();
 }
@@ -1360,16 +1373,28 @@ for (let i = 0; i < Math.min(raw.length, 10); i++) {
   const resultado = [];
 
   Object.values(porNroMov).forEach(grupo => {
-    let filaMain;
-    if (grupo.length > 1) {
-      const usdFila = grupo.find(f =>
-        String(f[C.cuenta] || '').includes('Dolares') ||
-        String(f[C.cuenta] || '').includes('Dólares')
-      );
-      filaMain = usdFila || grupo[0];
-    } else {
-      filaMain = grupo[0];
-    }
+    // Cuando IOL parte una operación en más de una fila bajo el mismo
+    // Nro. de Mov. (típicamente: importe principal en una fila y una
+    // comisión/impuesto en otra, ambas en la misma moneda), NO son
+    // duplicados — son partes reales del mismo trade. Elegir solo "la
+    // primera que diga Dólares" y descartar el resto perdía la otra
+    // parte (a veces el 99% del monto real). Ahora se suman todas las
+    // filas de la moneda predominante del grupo (Dólares si hay alguna,
+    // si no Pesos), y la fila "principal" (de la que sale Cant./Precio)
+    // es la de mayor cantidad de títulos — o, si empatan, mayor |Monto|.
+    const esUSDFila  = f => String(f[C.cuenta] || '').includes('Dolares') || String(f[C.cuenta] || '').includes('Dólares');
+    const filasUSD   = grupo.filter(esUSDFila);
+    const candidatas = filasUSD.length > 0 ? filasUSD : grupo;
+
+    let filaMain = candidatas[0];
+    candidatas.forEach(f => {
+      const cantF    = Math.abs(_num(f[C.cantidad]));
+      const cantMain = Math.abs(_num(filaMain[C.cantidad]));
+      if (cantF > cantMain) filaMain = f;
+      else if (cantF === cantMain && Math.abs(_num(f[C.monto])) > Math.abs(_num(filaMain[C.monto]))) filaMain = f;
+    });
+
+    const montoTotal = candidatas.reduce((s, f) => s + _num(f[C.monto]), 0);
 
     const estado = String(filaMain[C.estado] || '');
     if (!estado.includes('Terminada')) return;
@@ -1380,7 +1405,7 @@ for (let i = 0; i < Math.min(raw.length, 10); i++) {
     const fecha     = _fmtFecha(filaMain[C.concert]);
     const cantidad  = _num(filaMain[C.cantidad]);
     const precio    = _num(filaMain[C.precio]);
-    const monto     = _num(filaMain[C.monto]);
+    const monto     = montoTotal;
     const cuentaTxt = String(filaMain[C.cuenta] || '');
     const esUSD     = cuentaTxt.includes('Dolares') || cuentaTxt.includes('Dólares');
     const mep       = _getCCL(fecha, mepMap);
@@ -1785,14 +1810,16 @@ function diagnosticarTicker() {
 }
 
 // ─────────────────────────────────────────────
-// DIAGNÓSTICO — MOVIMIENTOS DUPLICADOS CON DATOS DISTINTOS
-// Caso real encontrado: dos filas con el mismo Nro. de Mov. + Boleto
-// (probablemente de dos pegadas manuales que se superpusieron), una con
-// el Monto correcto y otra con un Monto incompleto/mal armado. Como
-// procesarMovimientos() agrupa por Nro. de Mov. y ante un empate se
-// queda con "la primera que diga Dólares" sin chequear cuál es
-// correcta, la fila mala puede terminar ganando en silencio. Esto
-// busca TODOS los grupos con más de una fila y Montos que no coinciden.
+// DIAGNÓSTICO — OPERACIONES PARTIDAS EN VARIAS FILAS
+// Muchas operaciones vienen de IOL partidas en más de una fila bajo el
+// mismo Nro. de Mov. (típicamente: importe principal en una fila,
+// comisión/impuesto en otra, ambas en la misma moneda) — NO son
+// duplicados por error, son partes reales del mismo trade, y
+// procesarMovimientos() ya las suma automáticamente. Esto es solo
+// informativo: lista los grupos con más de una fila para poder
+// espiar alguno puntual y confirmar que la relación entre los montos
+// tiene sentido (ej. una comisión desproporcionadamente grande sí
+// ameritaría revisar el comprobante real de esa operación).
 // ─────────────────────────────────────────────
 function diagnosticarMovimientosDuplicados() {
   const ui = SpreadsheetApp.getUi();
@@ -1833,14 +1860,17 @@ function diagnosticarMovimientosDuplicados() {
   });
 
   if (sospechosos.length === 0) {
-    ui.alert('✅ No se encontraron movimientos duplicados con Montos inconsistentes.');
+    ui.alert('✅ No se encontraron operaciones partidas en varias filas con Montos distintos.');
   } else {
     const mensaje =
-      `⚠️ ${sospechosos.length} Nro. de Mov. con más de una fila y Montos que no coinciden ` +
-      `(revisar cuál es la correcta contra tu comprobante de IOL y borrar la otra):\n\n` +
+      `ℹ️ ${sospechosos.length} Nro. de Mov. con más de una fila y Montos distintos entre sí.\n` +
+      `procesarMovimientos() ya las suma automáticamente (no hace falta borrar nada) — esto es ` +
+      `solo para espiar algún caso puntual y confirmar que la relación entre los montos tiene ` +
+      `sentido (ej. una diferencia MUY grande entre las dos filas ameritaría chequear el ` +
+      `comprobante real de esa operación en IOL):\n\n` +
       sospechosos.join('\n\n');
     Logger.log(mensaje);
-    ui.alert('🔍 Diagnóstico: Movimientos Duplicados\n\n' + mensaje.substring(0, 1500) +
+    ui.alert('🔍 Diagnóstico: Operaciones Partidas en Varias Filas\n\n' + mensaje.substring(0, 1500) +
       (mensaje.length > 1500 ? '\n\n(...) ver el resto en Ejecuciones' : ''));
   }
 }
