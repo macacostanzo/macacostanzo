@@ -87,6 +87,64 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.23 — fix TIR Renta Fija otra vez (87% → 103%): pagos de renta en pesos etiquetados dólares
+
+Reporte, después de v3.21: "La tir ahora de renta fija dice 103,39% Cada
+vez peor [...] Podes concentrarte y revisar bien para no estar iterando
+infinitamente y llegando cada vez a peores resultados???" — con toda la
+razón: v3.21 arregló GD29 pero dejó peor el número general, porque no se
+había revisado sistemáticamente el resto de Renta Fija.
+
+**Esta vez, antes de tocar código**: escaneo completo de TODOS los "Pago
+de Renta/Dividendos" de Renta Fija (no ticker por ticker, reactivo) contra
+el % que representan de la tenencia nominal en ese momento. Ningún bono
+paga más de un pequeño % de su valor nominal en un solo cupón. Aparecieron
+106 pagos por encima del 5%, la mayoría ruido menor de $10-300, pero uno
+domina todo: **PBA25 solo, calculado de forma aislada, daba un XIRR de
+113,21%** — casi idéntico al 103,39% agregado. Mirando su secuencia de
+pagos con la tenencia real:
+
+| Fecha | Monto | Tenencia | % |
+|---|---|---|---|
+| 2021-07-12 | $2.065,87 | 22.000 | 9,4% |
+| 2022-04-12 | $1.546,88 | 15.000 | 10,3% |
+| 2022-07-12 | $3.045,17 | 28.000 | 10,9% |
+| 2023-04-12 | $9.398,65 | 62.000 | 15,2% |
+| 2023-07-13 | $17.105,33 | 78.000 | 21,9% |
+| 2023-10-18 | $22.181,59 | 83.000 | 26,7% |
+| 2024-01-12 | $26.620,77 | 83.000 | 32,1% |
+
+Con la tenencia prácticamente estable desde abril 2023, el monto se
+multiplica por 13x en 9 meses — no es un cupón, es un dato mal escalado.
+**Maki confirmó contra IOL** que los pagos del 18/10/2023 y 12/1/2024 son
+correctos, pero **en pesos argentinos** (no dólares, aunque la fila diga
+"Inversion Argentina Dolares"). Dividiendo los 7 pagos por el MEP
+histórico de cada fecha, el % de la tenencia da 0,028%-0,056% —
+consistente entre todos, muy lejos del 9%-32% que se leía como USD directo.
+
+Se encontró el mismo mecanismo en **BDC24** (mismo patrón exacto: compras
+y ventas correctamente en USD, "Pago de Renta" en pesos etiquetado
+"Dolares" — 12%-26% de la tenencia leído como USD, 0,03%-0,05% convertido
+por MEP). Se descartó aplicarlo como regla general: se comparó contra
+BDC28 y TO23 (otros ONs de la misma cuenta) y ahí el "Pago de Renta" YA
+viene correctamente etiquetado "Pesos" — no tienen el bug. El patrón real
+es: el bono liquida el cupón en pesos vía el agente de pago local aunque
+el título se opere en dólares — pero no es así para todos los ONs, solo
+para algunos.
+
+**Fix**: `procesarMovimientos()` excluye a PBA25 y BDC24 de la detección
+de moneda por Tipo Cuenta específicamente para sus filas de
+Renta/Dividendo/Amortización (las compras/ventas de ambos quedan como
+estaban, ya correctas). Con los dos fix (v3.21 + v3.23), el TIR de Renta
+Fija estimado baja de 103% a **~8%** — coherente con una cartera
+diversificada de bonos/ONs argentinos 2021-2026.
+
+**Además**, nuevo menú "🔍 Diagnóstico: Pagos de Renta/Amortización
+Implausibles": escanea toda Renta Fija de una sola vez y flagea cualquier
+pago que supere el 5% de la tenencia nominal, con el objetivo explícito de
+que este tipo de bug se detecte de entrada la próxima vez — no otra ronda
+de "se ve raro en el TIR, hay que investigar de nuevo".
+
 ## v3.22 — fix Costo Prom. MELI (y similares): v3.20 sumaba de más
 
 Reporte: "Precio promedio de compra dice en IOL que es de 16,16 no 24,77

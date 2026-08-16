@@ -1,8 +1,24 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.22                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.23                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.23:                                               ║
+ * ║  - Fix TIR Renta Fija (87%→103%, seguía mal tras v3.21):       ║
+ * ║    escaneo sistemático de TODOS los "Pago de Renta" de RF vs.  ║
+ * ║    % de la tenencia nominal. PBA25 (confirmado por Maki contra ║
+ * ║    IOL) y BDC24 (misma firma exacta) tienen sus compras/ventas ║
+ * ║    correctamente en USD, pero sus "Pago de Renta" vienen en    ║
+ * ║    PESOS aunque Tipo Cuenta diga "Dolares" — leídos como USD   ║
+ * ║    directo daban pagos de 9%-32% de la tenencia en un solo     ║
+ * ║    cupón (imposible); convertidos por MEP dan ~0,03%-0,06%     ║
+ * ║    consistente entre sí. Con ambos fix, TIR RF estimado baja   ║
+ * ║    a ~8%.                                                       ║
+ * ║  - Nuevo menú "🔍 Diagnóstico: Pagos de Renta/Amortización      ║
+ * ║    Implausibles": escanea TODA Renta Fija (no ticker por        ║
+ * ║    ticker) y flagea cualquier pago que supere el 5% de la      ║
+ * ║    tenencia nominal — para encontrar este tipo de bug antes    ║
+ * ║    de que se note en el TIR final, no después.                 ║
  * ║  CAMBIOS v3.22:                                               ║
  * ║  - Fix Costo Prom. de MELI (y cualquier ticker con el mismo    ║
  * ║    patrón): v3.20 sumaba TODAS las filas de un mismo Nro. de   ║
@@ -385,6 +401,7 @@ function onOpen() {
     .addItem('🔍 Diagnóstico: Clasificación Renta Fija', 'diagnosticarClasificacionRF')
     .addItem('🔍 Diagnóstico: Ticker Puntual', 'diagnosticarTicker')
     .addItem('🔍 Diagnóstico: Operaciones Partidas en Varias Filas', 'diagnosticarMovimientosDuplicados')
+    .addItem('🔍 Diagnóstico: Pagos de Renta/Amortización Implausibles', 'diagnosticarPagosRentaImplausibles')
     .addItem('🎯 Generar Radar', 'generarRadar')
     .addToUi();
 }
@@ -1451,17 +1468,36 @@ for (let i = 0; i < Math.min(raw.length, 10); i++) {
     const monto     = montoTotal;
     const cuentaTxt = String(filaMain[C.cuenta] || '');
     // Tipo Cuenta = "Dolares" normalmente indica que Precio/Monto ya están
-    // en USD. EXCEPCIÓN CONFIRMADA: GD29 en esta cuenta no tiene contraparte
-    // "GD29D" — todas sus filas vienen etiquetadas "Inversion Argentina
-    // Dolares" pero Precio/Monto están en PESOS (se corroboró reconstruyendo
-    // el % de la par implícito con el MEP histórico de cada fecha: da una
-    // curva 42%→39%→32%→24%→27%→35%→74% entre 2021 y 2025, calcada a la
-    // cotización real del Bonar 2029; tomado como USD directo, en cambio,
-    // la venta de 2025-05-30 quedaba en 89.390 USD -imposible- en vez de
-    // ~107 USD). Si en el futuro aparece un GD29D operado, sacar esta
-    // excepción y dejar que el Ticker_Base distinga los pares como siempre.
-    const esUSDExcepcion = (ticker === 'GD29');
-    const esUSD     = !esUSDExcepcion && (cuentaTxt.includes('Dolares') || cuentaTxt.includes('Dólares'));
+    // en USD, pero no siempre es confiable — hay tickers puntuales donde
+    // IOL etiqueta la fila "Dolares" y sin embargo el valor está en PESOS.
+    // Cada excepción de esta tabla está confirmada con datos reales (ver
+    // README v3.21/v3.23), no es una regla general: NO extrapolar a otros
+    // tickers sin la misma verificación.
+    //   - GD29: no tiene contraparte "GD29D" en esta cuenta — TODAS sus
+    //     filas (compra/venta/renta) vienen en pesos. Confirmado
+    //     reconstruyendo el % de la par implícito con el MEP histórico.
+    //   - PBA25: las compras/ventas SÍ están en USD (Precio ~84-101,
+    //     rango normal de %-de-la-par en dólares) — Confirmado por Maki
+    //     contra IOL — pero los "Pago de Renta" vienen en pesos aunque la
+    //     fila diga "Dolares". Sin este fix, esos 7 pagos se leían como
+    //     9,4%..32,1% de la tenencia nominal (imposible para un cupón);
+    //     convertidos por MEP dan 0,03%-0,06% consistente entre todos.
+    //   - BDC24: mismo mecanismo que PBA25 (compras/ventas en USD,
+    //     confirmadas — Precio 98,9-101, coherente con dólares — pero los
+    //     "Pago de Renta" en pesos etiquetados "Dolares"). No confirmado
+    //     por Maki contra IOL como PBA25, pero misma firma exacta: leídos
+    //     como USD daban 12-26% de la tenencia por pago (imposible),
+    //     convertidos por MEP dan 0,03%-0,05% — igual que PBA25 y
+    //     consistente con que otros ONs de esta cuenta que SÍ cotizan y
+    //     liquidan en pesos (BDC28, TO23) ya traen su "Pago de Renta"
+    //     correctamente etiquetado "Pesos" — el bono paga el cupón en
+    //     pesos vía el agente de pago local aunque el título se opere en
+    //     dólares. Si aparece otro caso así, usar "🔍 Diagnóstico: Pagos
+    //     de Renta/Amortización Implausibles" para confirmarlo primero.
+    const esARSExcepcion =
+      (ticker === 'GD29') ||
+      (['PBA25', 'BDC24'].includes(ticker) && (tipo === 'RENTA' || tipo === 'DIVIDENDO' || tipo === 'AMORTIZACION'));
+    const esUSD     = !esARSExcepcion && (cuentaTxt.includes('Dolares') || cuentaTxt.includes('Dólares'));
     const mep       = _getCCL(fecha, mepMap);
 
     let montoUSD = null;
@@ -1927,6 +1963,84 @@ function diagnosticarMovimientosDuplicados() {
     ui.alert('🔍 Diagnóstico: Operaciones Partidas en Varias Filas\n\n' + mensaje.substring(0, 1500) +
       (mensaje.length > 1500 ? '\n\n(...) ver el resto en Ejecuciones' : ''));
   }
+}
+
+// ─────────────────────────────────────────────
+// DIAGNÓSTICO: PAGOS DE RENTA/AMORTIZACIÓN IMPLAUSIBLES
+// ─────────────────────────────────────────────
+// Ningún bono paga más de un pequeño % de su valor nominal en un solo pago
+// de renta. Este diagnóstico existe porque así se encontró el bug real de
+// PBA25/BDC24 (v3.23): "Pago de Renta" etiquetado "Dolares" en Movimientos
+// pero en realidad en pesos — leído como USD directo daba pagos de
+// 9%-32% de la tenencia (imposible), inflando la TIR de Renta Fija a
+// niveles absurdos (87% → 103% en dos rondas de bugs distintos). Corre
+// esto ANTES de asumir que un TIR raro es un bug de código nuevo: si un
+// ticker aparece acá, hay que confirmar el monto real contra IOL (como se
+// hizo con PBA25) antes de tocar procesarMovimientos() — no alcanza con
+// que "se vea raro en la planilla".
+function diagnosticarPagosRentaImplausibles() {
+  const ui = SpreadsheetApp.getUi();
+  const UMBRAL = 0.05; // 5% de la tenencia nominal en un solo pago
+
+  let movs;
+  try {
+    movs = procesarMovimientos();
+  } catch (e) {
+    ui.alert('Error leyendo Movimientos: ' + e.message);
+    return;
+  }
+
+  const porTicker = {};
+  movs.forEach(m => {
+    if (m.clase !== 'Renta Fija' || !m.tickerBase) return;
+    if (!porTicker[m.tickerBase]) porTicker[m.tickerBase] = [];
+    porTicker[m.tickerBase].push(m);
+  });
+
+  const flags = [];
+  Object.entries(porTicker).forEach(([ticker, lista]) => {
+    lista.sort((a, b) => a.fecha < b.fecha ? -1 : 1);
+    let holding = 0;
+    lista.forEach(m => {
+      const cantAbs = Math.abs(m.cantidad || 0);
+      if (['COMPRA', 'TRANSF_IN'].includes(m.tipo)) {
+        holding += cantAbs;
+      } else if (['VENTA', 'TRANSF_OUT'].includes(m.tipo)) {
+        holding -= cantAbs;
+      } else if (m.tipo === 'AMORTIZACION' && m.cantidad) {
+        holding += m.cantidad; // ya viene con signo (negativo = amortiza capital)
+        if (holding < 0.0001) holding = 0;
+      } else if (['RENTA', 'DIVIDENDO'].includes(m.tipo)) {
+        const montoAbs = Math.abs(m.montoUSD || 0);
+        if (holding > 0 && montoAbs > 0) {
+          const pct = montoAbs / holding;
+          if (pct > UMBRAL) {
+            flags.push({ ticker, fecha: m.fecha, monto: m.montoUSD, holding, pct, moneda: m.moneda });
+          }
+        }
+      }
+    });
+  });
+
+  if (flags.length === 0) {
+    ui.alert('✅ No se encontraron pagos de renta/dividendo por encima del ' +
+      (UMBRAL * 100) + '% de la tenencia nominal en ese momento.');
+    return;
+  }
+
+  flags.sort((a, b) => b.pct - a.pct);
+  const detalle = flags.map(f =>
+    `${f.ticker.padEnd(8)} ${f.fecha}  monto=${f.monto.toFixed(2)} ${f.moneda}` +
+    `  tenencia=${f.holding.toFixed(1)}  (${(f.pct * 100).toFixed(1)}%)`
+  ).join('\n');
+
+  Logger.log(detalle);
+  const mensaje =
+    `⚠️ ${flags.length} pago(s) de renta/dividendo superan el ${UMBRAL * 100}% de la tenencia ` +
+    `nominal en su fecha — un bono real no paga eso de golpe. Antes de tocar el código, confirmá ` +
+    `el monto real contra el comprobante de IOL (como se hizo con PBA25 en v3.21/v3.23).\n\n` +
+    detalle.substring(0, 1400) + (detalle.length > 1400 ? '\n\n(...) ver el resto en Ejecuciones' : '');
+  ui.alert('🔍 Diagnóstico: Pagos de Renta/Amortización Implausibles', mensaje, ui.ButtonSet.OK);
 }
 
 // ─────────────────────────────────────────────
