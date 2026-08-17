@@ -87,6 +87,23 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.27 — Diagnóstico TIR Renta Fija: ahora por ticker con TODOS los flujos
+
+Pregunta de seguimiento (cuenta de Trini), después de explicar que 4 de 5
+posiciones RF cerradas (AL29, GD41, DNC7O, RUCDD) dieron pérdida: "¿Y no
+tuve cobros de AL29 en ese tiempo? ¿Y lo mismo con el resto de los
+activos?" — pregunta válida: el diagnóstico v3.26 solo mostraba los 15
+flujos más grandes de TODA la cuenta juntos, así que un cobro de renta
+chico en AL29 (si existió) podía no aparecer, aunque sí se sumaba al TIR
+calculado.
+
+**Fix**: el diagnóstico ahora agrupa por ticker (abiertos y cerrados) y
+muestra TODOS sus flujos, no solo los más grandes del conjunto — así se
+ve de una si hubo cobros de renta/amortización en el medio del período,
+no hace falta correr "Diagnóstico: Ticker Puntual" ticker por ticker.
+Ordenado por peor TIR primero, para ver de entrada cuáles son los que
+están arrastrando el agregado hacia abajo.
+
 ## v3.26 — Nuevo diagnóstico: TIR Renta Fija agregado vs. por ticker
 
 Reporte (cuenta de Trini): "El tir de renta fija en portfolio dice 1,17%

@@ -1,8 +1,16 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.26                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.27                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.27:                                               ║
+ * ║  - "🔍 Diagnóstico: TIR Renta Fija" ahora agrupa POR TICKER    ║
+ * ║    (abiertos y cerrados) con TODOS sus flujos — no solo los    ║
+ * ║    15 más grandes del conjunto. Antes un ticker cerrado con    ║
+ * ║    pérdida de capital pero con cupones cobrados en el medio no ║
+ * ║    mostraba esos cobros si eran chicos frente a la compra/     ║
+ * ║    venta. Ordenado por peor TIR primero, para ver de entrada   ║
+ * ║    qué está arrastrando el agregado.                            ║
  * ║  CAMBIOS v3.26:                                               ║
  * ║  - Nuevo menú "🔍 Diagnóstico: TIR Renta Fija (agregado vs.    ║
  * ║    por ticker)": para cuando el TIR agregado de Portfolio no   ║
@@ -2238,43 +2246,66 @@ function diagnosticarTIRRentaFija() {
     return;
   }
 
-  // Flujo final: valor actual de las posiciones RF abiertas (mismo dato
-  // que usa Flujos_TIR!E, última fila, vía Posiciones!G filtrado por X).
+  // Valor actual por ticker RF abierto (mismo dato que usa Flujos_TIR!E,
+  // última fila, vía Posiciones!G filtrado por X).
   const posSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(HOJAS.POSICIONES);
   const posData  = posSheet ? posSheet.getDataRange().getValues() : [];
   let valorActualRF = 0;
-  const tirPorTicker = [];
+  const valorActualPorTicker = {};
   for (let i = 1; i < posData.length; i++) {
     const clase = String(posData[i][23] || ''); // col X
     if (clase !== 'Renta Fija') continue;
-    valorActualRF += parseFloat(posData[i][6]) || 0; // col G — Valor USD
-    tirPorTicker.push({
-      ticker: String(posData[i][0] || ''),
-      tir: posData[i][12], // col M — TIR
-      valor: parseFloat(posData[i][6]) || 0,
-    });
+    const v = parseFloat(posData[i][6]) || 0; // col G — Valor USD
+    valorActualRF += v;
+    valorActualPorTicker[String(posData[i][0] || '')] = v;
   }
 
   const hoy = _fmtFecha(new Date());
-  const flujosConFinal = flujos.concat([{ fecha: hoy, monto: valorActualRF, ticker: '(valor actual)', tipo: '', cuenta: '' }]);
-  const tirAgregado = _xirr(flujosConFinal.map(f => ({ fecha: f.fecha, monto: f.monto })));
+  const tirAgregado = _xirr(
+    flujos.map(f => ({ fecha: f.fecha, monto: f.monto }))
+      .concat([{ fecha: hoy, monto: valorActualRF }])
+  );
 
-  const top = flujos.slice().sort((a, b) => Math.abs(b.monto) - Math.abs(a.monto)).slice(0, 15);
-  const detalleFlujos = top.map(f =>
-    `${f.fecha}  ${f.ticker.padEnd(8)} ${f.tipo.padEnd(12)} ${f.monto >= 0 ? '+' : ''}${f.monto.toFixed(2)} USD  (${f.cuenta})`
-  ).join('\n');
+  // v3.27: agrupado POR TICKER, con TODOS sus flujos (no solo los 15 más
+  // grandes) — así se ve, para cada uno (abierto o ya cerrado del todo),
+  // si tuvo cobros de renta/amortización además de compra/venta. Sin
+  // esto, un ticker cerrado con pérdida en el capital pero con cupones
+  // cobrados en el medio se veía peor de lo que fue en realidad.
+  const porTicker = {};
+  flujos.forEach(f => {
+    if (!porTicker[f.ticker]) porTicker[f.ticker] = [];
+    porTicker[f.ticker].push(f);
+  });
 
-  const detalleTir = tirPorTicker
-    .sort((a, b) => b.valor - a.valor)
-    .map(t => `${t.ticker.padEnd(8)} TIR=${typeof t.tir === 'number' ? (t.tir * 100).toFixed(2) + '%' : t.tir}  valor=${t.valor.toFixed(2)} USD`)
-    .join('\n');
+  const resumenTickers = Object.entries(porTicker).map(([ticker, fs]) => {
+    fs.sort((a, b) => a.fecha < b.fecha ? -1 : 1);
+    const valorActual = valorActualPorTicker[ticker];
+    const abierta = valorActual !== undefined;
+    const flujosParaXirr = abierta
+      ? fs.map(f => ({ fecha: f.fecha, monto: f.monto })).concat([{ fecha: hoy, monto: valorActual }])
+      : fs.map(f => ({ fecha: f.fecha, monto: f.monto }));
+    const tir = _xirr(flujosParaXirr);
+    const detalle = fs.map(f =>
+      `    ${f.fecha}  ${f.tipo.padEnd(12)} ${f.monto >= 0 ? '+' : ''}${f.monto.toFixed(2)} USD (${f.cuenta})`
+    ).join('\n');
+    return {
+      ticker, abierta, tir,
+      linea: `${ticker.padEnd(8)} [${abierta ? 'ABIERTA' : 'cerrada'}]  ` +
+        `TIR=${tir !== null ? (tir * 100).toFixed(2) + '%' : 'sin datos'}` +
+        (abierta ? `  valor actual=${valorActual.toFixed(2)} USD` : '') +
+        `\n${detalle}`,
+    };
+  });
+
+  // Peor TIR primero — para ver de entrada qué está arrastrando el agregado.
+  resumenTickers.sort((a, b) => (a.tir ?? 999) - (b.tir ?? 999));
+  const detalleCompleto = resumenTickers.map(t => t.linea).join('\n\n');
 
   const mensaje =
     `TIR agregado recalculado acá: ${tirAgregado !== null ? (tirAgregado * 100).toFixed(2) + '%' : 'sin datos'} ` +
     `(comparar contra Portfolio → TIR Renta Fija)\n` +
     `Valor actual RF (suma Posiciones): USD ${valorActualRF.toFixed(2)}\n\n` +
-    `── Top 15 flujos por magnitud ──\n${detalleFlujos}\n\n` +
-    `── TIR por ticker (Posiciones) ──\n${detalleTir}`;
+    `── Por ticker, todos los flujos, peor TIR primero ──\n${detalleCompleto}`;
 
   Logger.log(mensaje);
   ui.alert('🔍 Diagnóstico: TIR Renta Fija', mensaje.substring(0, 3800) +
