@@ -1,8 +1,19 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.27                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.28                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.28:                                               ║
+ * ║  - Fix en Detalle_Compras: el ajuste por split dividía el      ║
+ * ║    Precio de cada fila (para hacerlo comparable a hoy) pero    ║
+ * ║    dejaba la Cantidad SIN ajustar — Cantidad × Precio dejaba   ║
+ * ║    de cerrar contra Monto, y Valor Actual/G-P quedaban         ║
+ * ║    subestimados por el mismo factor del split (multiplicaban   ║
+ * ║    la cantidad vieja, de antes del split, por el precio de     ║
+ * ║    hoy, ya post-split). Reportado con BKNG: Cantidad=10,       ║
+ * ║    Precio=0,27, pero Monto=69,33 no cerraba ni cerca. Ahora     ║
+ * ║    Cantidad también se multiplica por el factor de split, así  ║
+ * ║    Cantidad × Precio vuelve a reconciliar contra Monto.         ║
  * ║  CAMBIOS v3.27:                                               ║
  * ║  - "🔍 Diagnóstico: TIR Renta Fija" ahora agrupa POR TICKER    ║
  * ║    (abiertos y cerrados) con TODOS sus flujos — no solo los    ║
@@ -3150,6 +3161,16 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
 
     const factorSplit = _factorSplitDesde(splitsPorTicker, m.tickerBase, m.fecha);
     const precioOpAjustado = precioOp / factorSplit;
+    // v3.28: la Cantidad histórica también hay que llevarla a equivalente
+    // post-split, igual que el Precio — si no, "Cantidad × Precio" no
+    // reconcilia contra Monto (Precio queda dividido por el split pero
+    // Cantidad se mostraba sin ajustar), y Valor Actual/G-P quedaban
+    // subestimados por el mismo factor (multiplicaban la cantidad VIEJA,
+    // de antes del split, por el precio de HOY, que ya es post-split).
+    // Reportado con BKNG: Cantidad=10, Precio=0,27, pero Monto=69,33 no
+    // cerraba ni cerca de 10×0,27 — factorSplit ajustaba el precio y se
+    // olvidaba de la cantidad.
+    const cantAjustada = cantAbs * factorSplit;
 
     const precioData   = preciosIOL[m.tickerBase] || {};
     const precioActual = precioData.precioUSD || 0;
@@ -3170,7 +3191,7 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
     let valorActual = '';
     let gp = '';
     if (precioActual > 0) {
-      valorActual = esRF ? cantAbs * precioActual / 100 : cantAbs * precioActual;
+      valorActual = esRF ? cantAjustada * precioActual / 100 : cantAjustada * precioActual;
       // Para una venta, "G/P" acá no es la ganancia realizada de esa venta
       // (eso ya está en Historial/Posiciones) — es cuánto valdría hoy la
       // misma cantidad, para comparar contra lo que se cobró al vender.
@@ -3182,14 +3203,14 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
       esCompra ? 'Compra' : 'Venta',
       m.clase || '',
       m.fecha,
-      cantAbs,
+      cantAjustada,
       precioOpAjustado,
       precioActual || '',
       variacionPct,
       montoOp,
       valorActual !== '' ? valorActual : '',
       gp !== '' ? gp : '',
-      factorSplit > 1.001 ? `ajustado x${factorSplit.toFixed(2)} por split` : '',
+      factorSplit > 1.001 ? `Cantidad y Precio ajustados x${factorSplit.toFixed(2)} por split` : '',
     ]);
   });
 

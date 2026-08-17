@@ -87,6 +87,36 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.28 — Fix Detalle_Compras: Cantidad no se ajustaba por split (solo el Precio)
+
+Reporte: "Veo en la columna I de la pestaña de detalle compras
+inconsistencias con los precios. Ejemplo bkng. Dice en el registro de la
+compra del 2025-11-19 que el precio de la operación fue de 0,27 pero en
+monto usd dice 69,33 aunque se compraron 10 nominales. Huelo que el
+ajuste del split funcionó mal."
+
+Tenía razón, y era más grave de lo que parecía a simple vista: no era
+solo que el Precio se viera raro — **Valor Actual y G/P de esa fila
+también estaban mal calculados** (subestimados) para cualquier compra
+afectada por un split posterior.
+
+`_escribirDetalleCompras()` ajusta el Precio de cada operación histórica
+dividiéndolo por el factor de split correspondiente, para que sea
+comparable contra el precio de hoy (ya post-split) — eso está bien. El
+problema es que la Cantidad se mostraba **sin ese mismo ajuste**: seguía
+siendo la cantidad original, de antes del split. Con Precio dividido por
+el split pero Cantidad intacta, "Cantidad × Precio" dejaba de cerrar
+contra Monto — exactamente lo que notó Maki con BKNG (10 × 0,27 = 2,70,
+muy lejos de los 69,33 reales). Y como Valor Actual se calcula como
+Cantidad × Precio Actual (el precio de HOY, ya post-split), usar la
+Cantidad vieja ahí también subestimaba el valor actual y la ganancia/
+pérdida de esa fila por el mismo factor del split.
+
+**Fix**: la Cantidad ahora también se multiplica por el factor de split,
+igual que el Precio se divide — así ambas quedan en equivalente post-
+split, "Cantidad × Precio" vuelve a reconciliar contra Monto, y Valor
+Actual/G-P usan la cantidad correcta.
+
 ## v3.27 — Diagnóstico TIR Renta Fija: ahora por ticker con TODOS los flujos
 
 Pregunta de seguimiento (cuenta de Trini), después de explicar que 4 de 5
