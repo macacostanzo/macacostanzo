@@ -87,6 +87,36 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.25 — Actualización automática por trigger de tiempo (días hábiles)
+
+Pedido: correr "Actualizar Todo" sola, sin depender de abrir la planilla
+desde la compu (la app móvil de Sheets no soporta menús de Apps Script).
+
+**Fix necesario primero**: `actualizarTodo()` empezaba con
+`const ui = SpreadsheetApp.getUi();` como primera línea — un trigger por
+tiempo corre "headless" (sin UI), así que esa línea sola tira error y mata
+todo el run antes de hacer nada. Se separó en tres funciones:
+
+- `_actualizarTodoCore()`: el trabajo real (MEP, importar movimientos,
+  saldo, procesar posiciones, Radar), sin ningún `getUi()`.
+- `actualizarTodo()`: la de siempre desde el menú, con los alerts.
+- `actualizarTodoSilencioso()`: para el trigger — nada de alerts, deja
+  constancia de cada corrida como **nota en la celda A1 de Radar** (pasar
+  el mouse para ver la última: hora, movimientos nuevos, saldo, o el
+  error si algo falló).
+
+**Nuevo menú**: "⏰ Programar Actualización Diaria" pide hora y minuto
+aproximados (los triggers de Apps Script no son exactos al minuto, disparan
+en algún momento dentro de esa hora) e instala un único trigger diario que
+internamente se salta sábados y domingos — más simple de instalar/borrar
+que 5 triggers separados por día. "⏰ Quitar Actualización Diaria" lo
+desinstala.
+
+**Sobre la autorización de cuenta**: se pide UNA sola vez, al instalar el
+trigger (o ya quedó dada si "Actualizar Todo" se corrió antes a mano) — no
+es algo que vuelva a pedir permiso cada corrida, y no llega como
+notificación al celular. Corre en los servidores de Google.
+
 ## v3.24 — Detalle_Compras ahora también muestra ventas
 
 Pedido: "Lo que agregaría en detalle_compras es las ventas (de las

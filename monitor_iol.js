@@ -1,8 +1,21 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.24                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.25                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.25:                                               ║
+ * ║  - Actualización automática por trigger de tiempo (para no      ║
+ * ║    depender de abrir la planilla desde la compu). Nuevo menú:  ║
+ * ║    "⏰ Programar Actualización Diaria" (pide hora/minuto,       ║
+ * ║    instala un trigger que corre de lunes a viernes) y "⏰       ║
+ * ║    Quitar Actualización Diaria".                                ║
+ * ║  - Fix necesario para que esto funcione: actualizarTodo()       ║
+ * ║    llamaba a SpreadsheetApp.getUi() como primera línea — un     ║
+ * ║    trigger headless no tiene UI, así que el run entero fallaba  ║
+ * ║    antes de hacer nada. Se separó el trabajo real (sin UI) en   ║
+ * ║    _actualizarTodoCore(); actualizarTodo() (menú) le agrega los ║
+ * ║    alerts, actualizarTodoSilencioso() (trigger) deja constancia ║
+ * ║    de cada corrida como nota en Radar!A1 en vez de un alert.    ║
  * ║  CAMBIOS v3.24:                                               ║
  * ║  - Detalle_Compras ahora también lista las VENTAS (parciales)  ║
  * ║    de tickers que siguen en cartera, con su propia Variación % ║
@@ -394,6 +407,8 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('📊 Inversiones')
     .addItem('🔄 Actualizar Todo',           'actualizarTodo')
+    .addItem('⏰ Programar Actualización Diaria (días hábiles)', 'instalarTriggerDiario')
+    .addItem('⏰ Quitar Actualización Diaria', 'desinstalarTriggerDiario')
     .addSeparator()
     .addItem('📥 Pegar Movimientos IOL',     'procesarMovimientos')
     .addSeparator()
@@ -1074,55 +1089,167 @@ function _obtenerPreciosIOL() {
 // ─────────────────────────────────────────────
 // ACTUALIZAR TODO
 // ─────────────────────────────────────────────
-function actualizarTodo() {
-  const ui = SpreadsheetApp.getUi();
+// El trabajo real vive acá, sin ningún SpreadsheetApp.getUi() — así se
+// puede llamar tanto desde el menú (actualizarTodo, con alerts) como
+// desde un trigger por tiempo (actualizarTodoProgramado, sin UI — un
+// trigger headless no tiene UI y getUi() ahí tira error, matando todo
+// el run en la primera línea si no se separa así).
+function _actualizarTodoCore() {
+  const resultado = { nuevos: 0, saldoInfo: '', error: null };
   try {
-    ui.alert('⏳ Iniciando actualización...\n\nEsto puede tardar unos segundos.');
-
-    // 1. MEP
     _actualizarMEP();
 
-    // 2. Importar movimientos nuevos desde API
-    let nuevos = 0;
-try {
-  nuevos = importarMovimientosIOL();
-  Logger.log('Movimientos importados: ' + nuevos);
-} catch(e) {
-  SpreadsheetApp.getUi().alert('Error en importarMovimientosIOL: ' + e.message + '\n' + e.stack);
-}
+    try {
+      resultado.nuevos = importarMovimientosIOL();
+      Logger.log('Movimientos importados: ' + resultado.nuevos);
+    } catch(e) {
+      Logger.log('Error en importarMovimientosIOL: ' + e.message + '\n' + e.stack);
+      resultado.error = 'importarMovimientosIOL: ' + e.message;
+    }
 
-    // 3. Actualizar saldo
-    let saldoInfo = '';
     try {
       const saldo = _actualizarSaldoIOL();
       if (saldo.usd > 0 || saldo.ars > 0) {
-        saldoInfo = `\nSaldo: USD ${saldo.usd.toFixed(2)} | ARS ${saldo.ars.toLocaleString('es-AR')}`;
+        resultado.saldoInfo = `Saldo: USD ${saldo.usd.toFixed(2)} | ARS ${saldo.ars.toLocaleString('es-AR')}`;
       } else {
         // Se pudo consultar pero dio $0 en ambas monedas — puede ser real
         // (nada en efectivo) o una cuenta con un formato de "moneda" que
-        // no matchea el parseo. Se avisa en vez de quedar en silencio.
-        saldoInfo = '\n⚠️ Saldo: USD 0.00 | ARS 0 (revisar con 🔍 Diagnóstico: Saldo IOL si no es real)';
+        // no matchea el parseo. Se deja registrado en vez de quedar en silencio.
+        resultado.saldoInfo = '⚠️ Saldo: USD 0.00 | ARS 0 (revisar con 🔍 Diagnóstico: Saldo IOL si no es real)';
       }
     } catch(e) {
-      // Antes esto quedaba solo en el log de ejecuciones y nadie se
-      // enteraba — ahora se avisa en el resumen final.
       Logger.log('Saldo IOL no disponible: ' + e.message);
-      saldoInfo = '\n⚠️ Saldo: no se pudo actualizar (' + e.message.substring(0, 100) + ')';
+      resultado.saldoInfo = '⚠️ Saldo: no se pudo actualizar (' + e.message.substring(0, 100) + ')';
     }
 
-    // 4. Procesar y calcular posiciones
     procesarMovimientos();
     calcularPosiciones();
-
-    ui.alert(
-      `✅ Actualización completada.\n` +
-      `📥 Movimientos nuevos: ${nuevos}` +
-      saldoInfo
-    );
   } catch(e) {
-    ui.alert('❌ Error: ' + e.message + '\n\n' + e.stack);
+    Logger.log('Error en actualizarTodo: ' + e.message + '\n' + e.stack);
+    resultado.error = e.message;
   }
   generarRadar();
+  return resultado;
+}
+
+function actualizarTodo() {
+  const ui = SpreadsheetApp.getUi();
+  ui.alert('⏳ Iniciando actualización...\n\nEsto puede tardar unos segundos.');
+  const r = _actualizarTodoCore();
+  if (r.error) {
+    ui.alert('❌ Error: ' + r.error);
+  } else {
+    ui.alert(
+      `✅ Actualización completada.\n` +
+      `📥 Movimientos nuevos: ${r.nuevos}\n` +
+      r.saldoInfo
+    );
+  }
+}
+
+// Versión sin UI para correr desde un trigger automático (ver
+// instalarTriggerDiario). Deja constancia de cada corrida como nota en
+// Radar!A1 (pasá el mouse por esa celda para ver la última) — así, si
+// algo falla en silencio un día, se nota apenas se abre la hoja.
+function actualizarTodoSilencioso() {
+  const r = _actualizarTodoCore();
+  const ahora = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+  const nota = r.error
+    ? `❌ Actualización automática ${ahora}\nError: ${r.error}`
+    : `✅ Actualización automática ${ahora}\nMovimientos nuevos: ${r.nuevos}\n${r.saldoInfo}`;
+  try {
+    const radar = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Radar');
+    if (radar) radar.getRange('A1').setNote(nota);
+  } catch(e) {
+    Logger.log('No se pudo dejar la nota de estado: ' + e.message);
+  }
+  Logger.log(nota);
+  return r;
+}
+
+// Función que apunta el trigger de tiempo. Se instala UNA por día (no
+// 5 por cada día hábil) y acá adentro se filtra sábado/domingo — más
+// simple de instalar/borrar que manejar 5 triggers separados. Correr en
+// fin de semana es gratis: no hace nada, sale en la primera línea.
+function actualizarTodoProgramado() {
+  const hoy = new Date().getDay(); // 0=domingo, 6=sábado
+  if (hoy === 0 || hoy === 6) {
+    Logger.log('actualizarTodoProgramado: fin de semana, no corre.');
+    return;
+  }
+  actualizarTodoSilencioso();
+}
+
+// ─────────────────────────────────────────────
+// PROGRAMAR / QUITAR ACTUALIZACIÓN AUTOMÁTICA DIARIA
+// ─────────────────────────────────────────────
+function instalarTriggerDiario() {
+  const ui = SpreadsheetApp.getUi();
+
+  const respHora = ui.prompt(
+    '⏰ Programar Actualización Diaria',
+    'Hora aproximada (0-23, hora de la planilla). Los triggers de Apps ' +
+    'Script no son exactos al minuto — disparan en algún momento dentro ' +
+    'de esa hora. Ej: 11 para "alrededor de las 11am".',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (respHora.getSelectedButton() !== ui.Button.OK) return;
+  const hora = parseInt(respHora.getResponseText().trim(), 10);
+  if (isNaN(hora) || hora < 0 || hora > 23) {
+    ui.alert('Hora inválida. Tiene que ser un número entre 0 y 23.');
+    return;
+  }
+
+  const respMin = ui.prompt(
+    '⏰ Programar Actualización Diaria',
+    'Minuto aproximado dentro de esa hora (0-59). Ej: 30 para "y media".',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (respMin.getSelectedButton() !== ui.Button.OK) return;
+  const minuto = parseInt(respMin.getResponseText().trim(), 10);
+  if (isNaN(minuto) || minuto < 0 || minuto > 59) {
+    ui.alert('Minuto inválido. Tiene que ser un número entre 0 y 59.');
+    return;
+  }
+
+  // Borra cualquier trigger previo de esta función para no duplicar si
+  // se corre "instalar" más de una vez.
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'actualizarTodoProgramado') {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+
+  ScriptApp.newTrigger('actualizarTodoProgramado')
+    .timeBased()
+    .everyDays(1)
+    .atHour(hora)
+    .nearMinute(minuto)
+    .create();
+
+  ui.alert(
+    `✅ Actualización automática programada.\n\n` +
+    `Va a correr todos los días cerca de las ${hora}:${String(minuto).padStart(2,'0')} ` +
+    `(hora de la planilla), pero se salta sábados y domingos.\n\n` +
+    `No hace falta tener la planilla ni el celular abiertos — corre en los ` +
+    `servidores de Google. Podés ver la última corrida pasando el mouse por ` +
+    `la celda A1 de la hoja Radar.\n\n` +
+    `Para desactivarla: "⏰ Quitar Actualización Diaria" en este mismo menú.`
+  );
+}
+
+function desinstalarTriggerDiario() {
+  const ui = SpreadsheetApp.getUi();
+  let borrados = 0;
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'actualizarTodoProgramado') {
+      ScriptApp.deleteTrigger(t);
+      borrados++;
+    }
+  });
+  ui.alert(borrados > 0
+    ? `✅ Actualización automática desactivada (${borrados} trigger(s) eliminado(s)).`
+    : 'No había ninguna actualización automática programada.');
 }
 
 // ─────────────────────────────────────────────
