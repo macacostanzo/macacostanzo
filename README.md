@@ -87,6 +87,30 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.26 — Nuevo diagnóstico: TIR Renta Fija agregado vs. por ticker
+
+Reporte (cuenta de Trini): "El tir de renta fija en portfolio dice 1,17%
+pero en posiciones las tir de los activos de renta fija va de 5,07 a
+15,11%. No me cierra."
+
+Importante entender primero: el TIR agregado de Portfolio **no** es un
+promedio de los TIRs individuales de Posiciones — es un solo XIRR sobre
+la suma de TODOS los flujos de Renta Fija mezclados (todas las compras,
+ventas y rentas de todos los tickers, juntas). Matemáticamente puede caer
+fuera del rango de los TIRs individuales sin ser un bug: el caso típico
+es una compra grande y reciente que todavía no tuvo tiempo de generar
+retorno y arrastra el promedio ponderado hacia abajo — no es lo mismo que
+el patrón real de bug ya visto (GD29/PBA25/BDC24: moneda mal etiquetada
+inflando o aplastando un flujo puntual).
+
+Sin ver los flujos reales de la cuenta de Trini no se puede distinguir
+un caso del otro a ciegas — por eso, en vez de otra ronda de conjeturas,
+se agregó **"🔍 Diagnóstico: TIR Renta Fija (agregado vs. por ticker)"**:
+recalcula el TIR agregado en el momento (para confirmar que coincide con
+lo que muestra Portfolio) y lista los 15 flujos de Renta Fija más grandes
+por magnitud, con fecha, ticker y moneda — el mismo tipo de dato que
+permitió encontrar GD29 y PBA25/BDC24 antes.
+
 ## v3.25 — Actualización automática por trigger de tiempo (días hábiles)
 
 Pedido: correr "Actualizar Todo" sola, sin depender de abrir la planilla

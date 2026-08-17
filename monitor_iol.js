@@ -1,8 +1,18 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.25                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.26                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.26:                                               ║
+ * ║  - Nuevo menú "🔍 Diagnóstico: TIR Renta Fija (agregado vs.    ║
+ * ║    por ticker)": para cuando el TIR agregado de Portfolio no   ║
+ * ║    cierra contra el rango de TIRs individuales en Posiciones   ║
+ * ║    (reportado en la cuenta de Trini: agregado 1,17% vs.        ║
+ * ║    individuales 5,07%-15,11%). Recalcula el agregado en el     ║
+ * ║    momento y muestra los 15 flujos más grandes de Renta Fija — ║
+ * ║    sin este dato no se puede distinguir un bug real (moneda    ║
+ * ║    mal etiquetada) de un efecto normal (compra grande reciente ║
+ * ║    que todavía no maduró y arrastra el promedio ponderado).    ║
  * ║  CAMBIOS v3.25:                                               ║
  * ║  - Actualización automática por trigger de tiempo (para no      ║
  * ║    depender de abrir la planilla desde la compu). Nuevo menú:  ║
@@ -426,6 +436,7 @@ function onOpen() {
     .addItem('🔍 Diagnóstico: Ticker Puntual', 'diagnosticarTicker')
     .addItem('🔍 Diagnóstico: Operaciones Partidas en Varias Filas', 'diagnosticarMovimientosDuplicados')
     .addItem('🔍 Diagnóstico: Pagos de Renta/Amortización Implausibles', 'diagnosticarPagosRentaImplausibles')
+    .addItem('🔍 Diagnóstico: TIR Renta Fija (agregado vs. por ticker)', 'diagnosticarTIRRentaFija')
     .addItem('🎯 Generar Radar', 'generarRadar')
     .addToUi();
 }
@@ -2177,6 +2188,97 @@ function diagnosticarPagosRentaImplausibles() {
     `el monto real contra el comprobante de IOL (como se hizo con PBA25 en v3.21/v3.23).\n\n` +
     detalle.substring(0, 1400) + (detalle.length > 1400 ? '\n\n(...) ver el resto en Ejecuciones' : '');
   ui.alert('🔍 Diagnóstico: Pagos de Renta/Amortización Implausibles', mensaje, ui.ButtonSet.OK);
+}
+
+// ─────────────────────────────────────────────
+// DIAGNÓSTICO: TIR RENTA FIJA (agregado vs. por ticker)
+// ─────────────────────────────────────────────
+// Para cuando el TIR agregado de Renta Fija en Portfolio no cierra contra
+// el rango de TIRs individuales en Posiciones. El agregado NO es un
+// promedio de los TIRs individuales — es un solo XIRR sobre la suma de
+// TODOS los flujos de RF mezclados — así que puede quedar fuera del
+// rango individual sin ser un bug (típicamente: una compra grande y
+// reciente todavía no tuvo tiempo de "madurar" y arrastra el promedio
+// ponderado hacia abajo). Este diagnóstico muestra los flujos más
+// grandes y el detalle de la cuenta para poder distinguir eso de un bug
+// real (moneda mal etiquetada, como pasó con GD29/PBA25/BDC24).
+function diagnosticarTIRRentaFija() {
+  const ui = SpreadsheetApp.getUi();
+  let movs;
+  try {
+    movs = procesarMovimientos();
+  } catch (e) {
+    ui.alert('Error leyendo Movimientos: ' + e.message);
+    return;
+  }
+
+  const eqMap = _cargarEquivalencias();
+  const flujos = [];
+  movs.forEach(m => {
+    const ticker = m.tickerBase;
+    if (!ticker) return;
+    const eq = eqMap[m.tickerIOL] || eqMap[ticker] || {};
+    const clase = m.clase || eq.clase || '';
+    if (clase !== 'Renta Fija') return;
+    const montoUSD = m.montoUSD;
+    if (montoUSD === null || montoUSD === undefined) return;
+
+    let flujoDir = 0;
+    if (['COMPRA', 'SUSCRIPCION_FCI', 'TRANSF_IN'].includes(m.tipo)) flujoDir = -Math.abs(montoUSD);
+    else if (['VENTA', 'RESCATE_FCI', 'TRANSF_OUT'].includes(m.tipo)) flujoDir = Math.abs(montoUSD);
+    else if (['RENTA', 'DIVIDENDO'].includes(m.tipo) && montoUSD > 0) flujoDir = Math.abs(montoUSD);
+    else if (m.tipo === 'AMORTIZACION' && montoUSD > 0) flujoDir = Math.abs(montoUSD);
+    if (flujoDir === 0) return;
+
+    flujos.push({ fecha: m.fecha, monto: flujoDir, ticker, tipo: m.tipo, cuenta: m.moneda });
+  });
+
+  if (flujos.length === 0) {
+    ui.alert('No hay flujos de Renta Fija en Movimientos.');
+    return;
+  }
+
+  // Flujo final: valor actual de las posiciones RF abiertas (mismo dato
+  // que usa Flujos_TIR!E, última fila, vía Posiciones!G filtrado por X).
+  const posSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(HOJAS.POSICIONES);
+  const posData  = posSheet ? posSheet.getDataRange().getValues() : [];
+  let valorActualRF = 0;
+  const tirPorTicker = [];
+  for (let i = 1; i < posData.length; i++) {
+    const clase = String(posData[i][23] || ''); // col X
+    if (clase !== 'Renta Fija') continue;
+    valorActualRF += parseFloat(posData[i][6]) || 0; // col G — Valor USD
+    tirPorTicker.push({
+      ticker: String(posData[i][0] || ''),
+      tir: posData[i][12], // col M — TIR
+      valor: parseFloat(posData[i][6]) || 0,
+    });
+  }
+
+  const hoy = _fmtFecha(new Date());
+  const flujosConFinal = flujos.concat([{ fecha: hoy, monto: valorActualRF, ticker: '(valor actual)', tipo: '', cuenta: '' }]);
+  const tirAgregado = _xirr(flujosConFinal.map(f => ({ fecha: f.fecha, monto: f.monto })));
+
+  const top = flujos.slice().sort((a, b) => Math.abs(b.monto) - Math.abs(a.monto)).slice(0, 15);
+  const detalleFlujos = top.map(f =>
+    `${f.fecha}  ${f.ticker.padEnd(8)} ${f.tipo.padEnd(12)} ${f.monto >= 0 ? '+' : ''}${f.monto.toFixed(2)} USD  (${f.cuenta})`
+  ).join('\n');
+
+  const detalleTir = tirPorTicker
+    .sort((a, b) => b.valor - a.valor)
+    .map(t => `${t.ticker.padEnd(8)} TIR=${typeof t.tir === 'number' ? (t.tir * 100).toFixed(2) + '%' : t.tir}  valor=${t.valor.toFixed(2)} USD`)
+    .join('\n');
+
+  const mensaje =
+    `TIR agregado recalculado acá: ${tirAgregado !== null ? (tirAgregado * 100).toFixed(2) + '%' : 'sin datos'} ` +
+    `(comparar contra Portfolio → TIR Renta Fija)\n` +
+    `Valor actual RF (suma Posiciones): USD ${valorActualRF.toFixed(2)}\n\n` +
+    `── Top 15 flujos por magnitud ──\n${detalleFlujos}\n\n` +
+    `── TIR por ticker (Posiciones) ──\n${detalleTir}`;
+
+  Logger.log(mensaje);
+  ui.alert('🔍 Diagnóstico: TIR Renta Fija', mensaje.substring(0, 3800) +
+    (mensaje.length > 3800 ? '\n\n(...) ver el resto en Ejecuciones' : ''), ui.ButtonSet.OK);
 }
 
 // ─────────────────────────────────────────────
