@@ -87,6 +87,36 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.24 — Detalle_Compras ahora también muestra ventas
+
+Pedido: "Lo que agregaría en detalle_compras es las ventas (de las
+empresas que tengo en cartera). Porque no entiendo por ejemplo porque en
+la planilla de Frank en radar sí menciona la compra de PBR ya que del
+precio de venta ya está en menos de 10%. Si yo no lo puedo ver en todos
+los tickers y no me lo pone en el radar se me escapa."
+
+La sección de Reentrada del Radar mira, para CADA ticker de Renta
+Variable, su última operación (compra **o venta**) y avisa si el precio
+actual cayó ≥10% desde ahí — pero esa comparación no se veía en ningún
+lado más que en el resultado final de Radar. Si una venta parcial de PBR
+quedaba como referencia y el precio bajó, no había forma de auditar el
+número a mano, ni de mirar otros tickers que estén cerca del umbral pero
+todavía no lo crucen.
+
+**Fix**: `_escribirDetalleCompras()` ahora lista también las filas de
+Venta/Rescate FCI/Transferencia OUT (antes solo Compra/Suscripción FCI/
+Transferencia IN), con columna nueva "Tipo" y su propia Variación % vs.
+precio actual — la misma cuenta que hace Reentrada, pero visible para
+cualquier operación de cualquier ticker en cartera, no solo para lo que
+ya cruzó el -10%.
+
+**Límite que sigue igual**: la hoja sigue acotada a tickers con posición
+abierta hoy (una venta parcial de PBR aparece si todavía tenés algo de
+PBR). Si Radar sugiere reentrar en un ticker que vendiste del todo (cero
+posición), esa operación no va a aparecer en Detalle_Compras — para eso
+está Historial. Si hace falta verlo ahí también, es un cambio de alcance
+aparte.
+
 ## v3.23 — fix TIR Renta Fija otra vez (87% → 103%): pagos de renta en pesos etiquetados dólares
 
 Reporte, después de v3.21: "La tir ahora de renta fija dice 103,39% Cada

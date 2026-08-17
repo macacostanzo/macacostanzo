@@ -1,8 +1,17 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.23                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.24                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.24:                                               ║
+ * ║  - Detalle_Compras ahora también lista las VENTAS (parciales)  ║
+ * ║    de tickers que siguen en cartera, con su propia Variación % ║
+ * ║    vs. precio actual. Antes solo se veía la señal de Reentrada ║
+ * ║    si Radar la cruzaba (caída ≥10%) — ahora se puede auditar   ║
+ * ║    a mano cualquier operación de cualquier ticker en cartera,  ║
+ * ║    esté cerca del umbral o no. Nueva columna "Tipo" (Compra/   ║
+ * ║    Venta). Sigue acotado a posiciones abiertas hoy — un ticker ║
+ * ║    vendido del todo no aparece acá (ver Historial para esos).  ║
  * ║  CAMBIOS v3.23:                                               ║
  * ║  - Fix TIR Renta Fija (87%→103%, seguía mal tras v3.21):       ║
  * ║    escaneo sistemático de TODOS los "Pago de Renta" de RF vs.  ║
@@ -2837,8 +2846,8 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
   sheet.clearConditionalFormatRules();
 
   const hdrs = [
-    'Ticker', 'Clase', 'Fecha Compra', 'Cantidad', 'Precio Compra (USD)',
-    'Precio Actual (USD)', 'Variación %', 'Monto Invertido (USD)',
+    'Ticker', 'Tipo', 'Clase', 'Fecha', 'Cantidad', 'Precio Operación (USD)',
+    'Precio Actual (USD)', 'Variación %', 'Monto (USD)',
     'Valor Actual (USD)', 'G/P (USD)', 'Nota'
   ];
   _setHeaders(HOJAS.DETALLE_COMPRAS, hdrs);
@@ -2848,8 +2857,8 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
   const abiertosSet = new Set(abiertas.map(p => p.tickerBase));
 
   // Splits detectados (misma lógica que Reentrada) — para ajustar el
-  // precio de cada compra al equivalente post-split, y para no listar la
-  // "Transferencia de Titulos IN" que en realidad es un split como si
+  // precio de cada operación al equivalente post-split, y para no listar
+  // la "Transferencia de Titulos IN" que en realidad es un split como si
   // fuera una compra a precio $0.
   const splitsPorTicker = _calcularSplitsPorTicker(movs);
   const fechasSplit = {}; // tickerBase -> Set de fechas de split
@@ -2857,19 +2866,30 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
     fechasSplit[ticker] = new Set(splits.map(s => s.fecha));
   });
 
+  // v3.24: además de las compras, se listan las VENTAS de tickers que
+  // siguen en cartera (ventas parciales). Sin esto, una operación como
+  // "vendiste una parte de PBR a $X" quedaba invisible salvo que Radar
+  // la cruzara sola en Reentrada — no había forma de auditar a mano por
+  // qué Radar sugiere reentrar, ni de mirar otros tickers que estén
+  // cerca del umbral sin haberlo cruzado todavía.
+  const TIPOS_COMPRA = ['COMPRA', 'SUSCRIPCION_FCI', 'TRANSF_IN'];
+  const TIPOS_VENTA  = ['VENTA', 'RESCATE_FCI', 'TRANSF_OUT'];
+
   const filas = [];
   movs.forEach(m => {
-    if (!['COMPRA', 'SUSCRIPCION_FCI', 'TRANSF_IN'].includes(m.tipo)) return;
+    const esCompra = TIPOS_COMPRA.includes(m.tipo);
+    const esVenta  = TIPOS_VENTA.includes(m.tipo);
+    if (!esCompra && !esVenta) return;
     if (!m.tickerBase || !abiertosSet.has(m.tickerBase)) return;
     if (m.tipo === 'TRANSF_IN' && (fechasSplit[m.tickerBase] || new Set()).has(m.fecha)) return;
 
     const cantAbs = Math.abs(m.cantidad);
     if (!cantAbs) return;
-    const precioCompra = m.precioUSD || (Math.abs(m.montoUSD || 0) / cantAbs);
-    if (!precioCompra) return; // sin precio (ej. transferencia sin costo) no aporta a la comparación
+    const precioOp = m.precioUSD || (Math.abs(m.montoUSD || 0) / cantAbs);
+    if (!precioOp) return; // sin precio (ej. transferencia sin costo) no aporta a la comparación
 
     const factorSplit = _factorSplitDesde(splitsPorTicker, m.tickerBase, m.fecha);
-    const precioCompraAjustado = precioCompra / factorSplit;
+    const precioOpAjustado = precioOp / factorSplit;
 
     const precioData   = preciosIOL[m.tickerBase] || {};
     const precioActual = precioData.precioUSD || 0;
@@ -2878,28 +2898,35 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
     // La variación % solo tiene sentido en Renta Variable — en Renta Fija
     // el precio baja por amortización de capital, no por estar "más barato"
     // (mismo motivo por el que Reentrada quedó acotada a Renta Variable).
+    // Para una VENTA, esta misma variación % es la señal de Reentrada de
+    // esa operación puntual: negativa y grande = el precio actual está
+    // bastante debajo de donde vendiste.
     let variacionPct = '';
-    if (m.clase === 'Renta Variable' && precioActual > 0 && precioCompraAjustado > 0) {
-      variacionPct = (precioActual - precioCompraAjustado) / precioCompraAjustado;
+    if (m.clase === 'Renta Variable' && precioActual > 0 && precioOpAjustado > 0) {
+      variacionPct = (precioActual - precioOpAjustado) / precioOpAjustado;
     }
 
-    const montoInvertido = Math.abs(m.montoUSD || 0);
+    const montoOp = Math.abs(m.montoUSD || 0);
     let valorActual = '';
     let gp = '';
     if (precioActual > 0) {
       valorActual = esRF ? cantAbs * precioActual / 100 : cantAbs * precioActual;
-      gp = valorActual - montoInvertido;
+      // Para una venta, "G/P" acá no es la ganancia realizada de esa venta
+      // (eso ya está en Historial/Posiciones) — es cuánto valdría hoy la
+      // misma cantidad, para comparar contra lo que se cobró al vender.
+      gp = esCompra ? valorActual - montoOp : montoOp - valorActual;
     }
 
     filas.push([
       m.tickerBase,
+      esCompra ? 'Compra' : 'Venta',
       m.clase || '',
       m.fecha,
       cantAbs,
-      precioCompraAjustado,
+      precioOpAjustado,
       precioActual || '',
       variacionPct,
-      montoInvertido,
+      montoOp,
       valorActual !== '' ? valorActual : '',
       gp !== '' ? gp : '',
       factorSplit > 1.001 ? `ajustado x${factorSplit.toFixed(2)} por split` : '',
@@ -2907,26 +2934,26 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
   });
 
   if (filas.length === 0) {
-    sheet.getRange('A2').setValue('No hay compras para mostrar todavía.');
+    sheet.getRange('A2').setValue('No hay compras ni ventas para mostrar todavía.');
     return;
   }
 
   // Ordenar por ticker y, dentro de cada ticker, por fecha ascendente
   filas.sort((a, b) => {
     if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
-    return a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0;
+    return a[3] < b[3] ? -1 : a[3] > b[3] ? 1 : 0;
   });
 
   const nRows = filas.length;
   sheet.getRange(2, 1, nRows, hdrs.length).setValues(filas);
 
-  sheet.getRange(2, 4, nRows, 1).setNumberFormat('#,##0.000');
-  sheet.getRange(2, 5, nRows, 2).setNumberFormat('"USD" #,##0.000');
-  sheet.getRange(2, 7, nRows, 1).setNumberFormat('0.00%');
-  sheet.getRange(2, 8, nRows, 3).setNumberFormat('"USD" #,##0.00');
+  sheet.getRange(2, 5, nRows, 1).setNumberFormat('#,##0.000');
+  sheet.getRange(2, 6, nRows, 2).setNumberFormat('"USD" #,##0.000');
+  sheet.getRange(2, 8, nRows, 1).setNumberFormat('0.00%');
+  sheet.getRange(2, 9, nRows, 3).setNumberFormat('"USD" #,##0.00');
 
   const reglas = [];
-  [sheet.getRange(2, 7, nRows, 1), sheet.getRange(2, 10, nRows, 1)].forEach(rng => {
+  [sheet.getRange(2, 8, nRows, 1), sheet.getRange(2, 11, nRows, 1)].forEach(rng => {
     reglas.push(SpreadsheetApp.newConditionalFormatRule()
       .whenNumberGreaterThan(0)
       .setBackground('#d9ead3').setFontColor('#274e13')
