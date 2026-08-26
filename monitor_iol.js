@@ -1,8 +1,22 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.28                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.29                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.29:                                               ║
+ * ║  - Fix en Portfolio → "Flujos de Capital": "Total Depositado"  ║
+ * ║    y "Total Retirado" sumaban solo Flujos_TIR!B2:B999,          ║
+ * ║    mientras que TIR Anualizada y TIR por clase usaban B2:B2000 ║
+ * ║    (D/E/F2:2000) — inconsistente, y las dos primeras dejaban   ║
+ * ║    plata afuera en cuentas activas con más de 999 movimientos  ║
+ * ║    relevantes en Flujos_TIR, en silencio (sin error). Reportado║
+ * ║    en la cuenta de Jose.                                        ║
+ * ║  - En vez de subir el número mágico, el rango ahora se calcula ║
+ * ║    del largo REAL de Flujos_TIR en cada corrida (+200 de        ║
+ * ║    margen) — no vuelve a pasar sin importar cuánto crezca la   ║
+ * ║    cuenta. Para que el rango sea el de HOY, _escribirFlujosTIR ║
+ * ║    ahora corre ANTES que _escribirPortfolio (antes era al       ║
+ * ║    revés).                                                       ║
  * ║  CAMBIOS v3.28:                                               ║
  * ║  - Fix en Detalle_Compras: el ajuste por split dividía el      ║
  * ║    Precio de cada fila (para hacerlo comparable a hoy) pero    ║
@@ -1855,9 +1869,12 @@ function calcularPosiciones() {
   _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL);
   _escribirHistorial(cerradas, flujosPorTicker);
   _escribirDetalleCompras(movs, abiertas, preciosIOL);
+  // Flujos_TIR tiene que escribirse ANTES que Portfolio: éste arma sus
+  // fórmulas con el rango exacto de filas que Flujos_TIR tiene HOY (ver
+  // v3.29), y para eso necesita que la hoja ya esté actualizada.
+  _escribirFlujosTIR(movs);
   _escribirPortfolio(abiertas, cerradas, config);
   _escribirRentaFija(abiertas, config);
-  _escribirFlujosTIR(movs);
   _inicializarIngresosEgresos();
   _inicializarConfig();
 
@@ -2668,6 +2685,19 @@ function _escribirPortfolio(abiertas, cerradas, config) {
   const sheet = _getSheet(HOJAS.PORTFOLIO);
   const props = PropertiesService.getScriptProperties();
 
+  // v3.29: las fórmulas de abajo (XIRR y "Flujos de Capital") apuntaban a
+  // rangos fijos de Flujos_TIR — algunas hasta la fila 2000, y las de
+  // "Flujos de Capital" hasta la 999 nada más (inconsistente con el resto,
+  // y mucho más chico). En cuentas activas Flujos_TIR fácilmente supera
+  // esas 999 filas, así que quedaba plata afuera de "Total Depositado" /
+  // "Total Retirado" en silencio (sin error, sin aviso — el SUMIF
+  // simplemente no veía las filas de más). Ahora el rango se calcula del
+  // largo REAL de Flujos_TIR en cada corrida (con margen), para que no
+  // vuelva a pasar sin importar cuánto crezca la cuenta con los años.
+  const sheetFlujos   = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(HOJAS.FLUJOS_TIR);
+  const ultimaFilaFlujos = Math.max((sheetFlujos ? sheetFlujos.getLastRow() : 0) + 200, 2000);
+  const rangoFlujos = (col) => `Flujos_TIR!${col}2:${col}${ultimaFilaFlujos}`;
+
   let saldoUSD = parseFloat(props.getProperty('saldo_usd') || '0') || 0;
   let saldoARS = parseFloat(props.getProperty('saldo_ars') || '0') || 0;
 
@@ -2756,7 +2786,7 @@ function _escribirPortfolio(abiertas, cerradas, config) {
   sheet.setRowHeight(f, 40);
 
   f++; escribirFila(f, 'TIR Anualizada (XIRR)',
-    `=IFERROR(XIRR(Flujos_TIR!B2:B2000;Flujos_TIR!A2:A2000);"Sin datos suficientes")`,
+    `=IFERROR(XIRR(${rangoFlujos('B')};${rangoFlujos('A')});"Sin datos suficientes")`,
     '0.00%');
   sheet.getRange(f, 1, 1, 2).setFontWeight('bold').setFontSize(13);
 
@@ -2788,17 +2818,17 @@ function _escribirPortfolio(abiertas, cerradas, config) {
   escribirTitulo(f, '  TIR POR CLASE (anualizada en USD)');
 
   f++; escribirFila(f, 'TIR Renta Variable',
-    `=IFERROR(XIRR(Flujos_TIR!D2:D2000;Flujos_TIR!A2:A2000);"Sin datos")`, '0.00%');
+    `=IFERROR(XIRR(${rangoFlujos('D')};${rangoFlujos('A')});"Sin datos")`, '0.00%');
   sheet.getRange(f, 1, 1, 2).setFontWeight('bold');
   const filaTirRV = f;
 
   f++; escribirFila(f, 'TIR Renta Fija',
-    `=IFERROR(XIRR(Flujos_TIR!E2:E2000;Flujos_TIR!A2:A2000);"Sin datos")`, '0.00%');
+    `=IFERROR(XIRR(${rangoFlujos('E')};${rangoFlujos('A')});"Sin datos")`, '0.00%');
   sheet.getRange(f, 1, 1, 2).setFontWeight('bold');
   const filaTirRF = f;
 
   f++; escribirFila(f, 'TIR Renta Mixta / FCI',
-    `=IFERROR(XIRR(Flujos_TIR!F2:F2000;Flujos_TIR!A2:A2000);"Sin datos")`, '0.00%');
+    `=IFERROR(XIRR(${rangoFlujos('F')};${rangoFlujos('A')});"Sin datos")`, '0.00%');
   sheet.getRange(f, 1, 1, 2).setFontWeight('bold');
 
   // Benchmark RF — viene de la hoja Config de ESTA planilla (o del default
@@ -2873,12 +2903,12 @@ function _escribirPortfolio(abiertas, cerradas, config) {
   escribirTitulo(f, '  FLUJOS DE CAPITAL');
 
   f++; escribirFila(f, 'Total Depositado (USD)',
-    `=IFERROR(ABS(SUMIF(Flujos_TIR!B2:B999;"<0";Flujos_TIR!B2:B999));"")`,
+    `=IFERROR(ABS(SUMIF(${rangoFlujos('B')};"<0";${rangoFlujos('B')}));"")`,
     '"USD" #,##0.00');
   const filaDepositado = f;
 
   f++; escribirFila(f, 'Total Retirado (USD)',
-    `=IFERROR(SUMIF(Flujos_TIR!B2:B999;">0";Flujos_TIR!B2:B999)-INDEX(Flujos_TIR!B2:B999;COUNTA(Flujos_TIR!B2:B999));"")`,
+    `=IFERROR(SUMIF(${rangoFlujos('B')};">0";${rangoFlujos('B')})-INDEX(${rangoFlujos('B')};COUNTA(${rangoFlujos('B')}));"")`,
     '"USD" #,##0.00');
   const filaRetirado = f;
 

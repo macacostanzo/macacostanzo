@@ -87,6 +87,30 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.29 — Fix Portfolio: "Flujos de Capital" solo miraba hasta la fila 999
+
+Reporte (cuenta de Jose, mientras se investigaba otro tema de saldo): "En
+la pestaña de portfolio en flujos de capital considera hasta la celda
+b999 y queda mucho afuera. Fíjate si no se repite el error en otras."
+
+Se revisaron todas las fórmulas de Portfolio que apuntan a Flujos_TIR.
+Efectivamente el problema estaba **solo** en "Total Depositado (USD)" y
+"Total Retirado (USD)" (sección "Flujos de Capital"): usaban
+`Flujos_TIR!B2:B999`, mientras que "TIR Anualizada" y "TIR por clase"
+(Renta Variable/Fija/Mixta) usaban `B2:B2000` / `D2:D2000` / etc. — el
+mismo tipo de límite fijo, pero un número más grande. En una cuenta activa,
+Flujos_TIR fácilmente supera las 999 filas (siempre que haya suficientes
+movimientos + pagos de renta/dividendos a lo largo de los años), y esas
+dos métricas quedaban truncadas **en silencio**, sin ningún error visible.
+
+**Fix**: en vez de subir el número mágico de 999 a 2000 (que en algún
+momento futuro se volvería a quedar corto para una cuenta de mucho tiempo
+operando), el rango ahora se calcula del largo REAL de la hoja Flujos_TIR
+en cada corrida de `_escribirPortfolio()`, con 200 filas de margen. Para
+que ese cálculo use el largo actualizado (no el de la corrida anterior),
+`_escribirFlujosTIR()` ahora corre ANTES que `_escribirPortfolio()` en
+`calcularPosiciones()` (antes era al revés).
+
 ## v3.28 — Fix Detalle_Compras: Cantidad no se ajustaba por split (solo el Precio)
 
 Reporte: "Veo en la columna I de la pestaña de detalle compras
