@@ -14,6 +14,26 @@ una estrategia de inversión de largo plazo.
 4. Primera vez: `📊 Inversiones → ⚙️ Inicializar Hojas`, después
    `🔐 Configurar Acceso IOL`, y finalmente `🔄 Actualizar Todo`.
 
+## Monitor Consolidado — ver varias cuentas desde el celular
+
+[`monitor_dashboard.js`](./monitor_dashboard.js) es un script **separado**
+(vive en su propia Google Sheet en blanco, no en ninguna de las planillas
+de `monitor_iol.js`) que arma un panel de solo-lectura, mobile-friendly,
+con el resumen de varias cuentas a la vez — pensado para verlo desde el
+celular sin depender de la app de Sheets ni de modo escritorio.
+
+Cada tarjeta muestra Costo Invertido, Valor Actual, Ganancia, TIR y
+distribución Renta Variable/Renta Fija, leídos directamente de la hoja
+"Portfolio" de cada planilla — no recalcula nada, solo lee lo que
+`monitor_iol.js` ya calculó ahí. Cada persona sigue actualizando su propia
+planilla como siempre (a mano o con el trigger diario); este panel es
+puramente de lectura.
+
+Las instrucciones de instalación completas (crear la Sheet nueva, pegar el
+script, compartir las 4 planillas como Lector, y los ajustes de
+implementación que lo mantienen privado — "Ejecutar como: Yo" + "Acceso:
+Solo yo") están en el comentario del encabezado del archivo.
+
 ## v3.6 (en curso) — camino a automatizar depósitos/extracciones
 
 Hoy `importarMovimientosIOL()` solo consulta `/api/operaciones`, que trae
