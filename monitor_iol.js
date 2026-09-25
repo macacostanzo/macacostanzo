@@ -1,8 +1,20 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.31                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.32                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.32:                                               ║
+ * ║  - Se puede iniciar sesión de IOL desde el celular: la página   ║
+ * ║    web del botón "Actualizar Todo" (v3.30) ahora tiene arriba   ║
+ * ║    un formulario de usuario/contraseña + estado de la sesión   ║
+ * ║    ("🔓 activa (~X min)" / "🔒 vencida"). Antes el único login  ║
+ * ║    posible era el popup de SpreadsheetApp.getUi(), que no       ║
+ * ║    existe fuera del menú de Sheets (no en el Web App). Mismo    ║
+ * ║    criterio de siempre: la contraseña NUNCA se guarda, se usa   ║
+ * ║    una sola vez para pedir el token y se descarta.               ║
+ * ║  - _getTokenIOL() se separó en _solicitarTokenIOL(usuario,      ║
+ * ║    password) para que la reuse tanto el popup del menú como el ║
+ * ║    login web nuevo (misma lógica, sin duplicar código).         ║
  * ║  CAMBIOS v3.31:                                               ║
  * ║  - Fix: usando el botón del celu (v3.30), el token IOL vencido ║
  * ║    (dura 30 min) hacía crashear _getTokenIOL() con un error     ║
@@ -538,8 +550,9 @@ function _getTokenIOL() {
     throw new Error(
       'Token IOL vencido (dura 30 min) y no hay una sesión interactiva para ' +
       'reingresar usuario/contraseña — esto pasa en el trigger automático o ' +
-      'el botón del celular. Abrí la planilla y corré "Actualizar Todo" desde ' +
-      'el menú para renovar la sesión a mano.'
+      'el botón del celular. Iniciá sesión desde la página web (el mismo ' +
+      'link del botón "Actualizar Todo" tiene un formulario de acceso IOL ' +
+      'arriba) o corré "Actualizar Todo" desde el menú de la planilla.'
     );
   }
   ui.alert(
@@ -556,6 +569,19 @@ function _getTokenIOL() {
   const respP = ui.prompt('🔐 Contraseña IOL', 'Ingresá tu contraseña (no se guardará):', ui.ButtonSet.OK_CANCEL);
   if (respP.getSelectedButton() !== ui.Button.OK) throw new Error('Cancelado por el usuario.');
   const password = respP.getResponseText().trim();
+
+  return _solicitarTokenIOL(usuario, password);
+}
+
+// Hace el pedido de token en sí (POST a /token) y lo guarda — separado
+// de _getTokenIOL() para que también lo pueda usar el login desde la
+// página web (v3.32, ver doGet/loginIOL), que junta usuario/contraseña
+// con un formulario HTML en vez de SpreadsheetApp.getUi().prompt(), que
+// no existe fuera de una sesión interactiva con la planilla abierta.
+// La contraseña NUNCA se guarda acá tampoco — se usa una sola vez para
+// este pedido y se descarta apenas termina la función.
+function _solicitarTokenIOL(usuario, password) {
+  const props = PropertiesService.getScriptProperties();
 
   const resp = UrlFetchApp.fetch(`${IOL_BASE}/token`, {
     method:  'POST',
@@ -1292,25 +1318,75 @@ function doGet(e) {
     if (radar) ultimaNota = radar.getRange('A1').getNote() || '';
   } catch(err) {}
 
+  // v3.32: estado del token al cargar la página — así se ve de entrada
+  // si hace falta loguearse antes de tocar "Actualizar Todo", en vez de
+  // enterarse recién después de tocarlo y que falle.
+  const props       = PropertiesService.getScriptProperties();
+  const tokenExpira = parseInt(props.getProperty('iol_token_expira') || '0');
+  const tokenValido = Date.now() < tokenExpira;
+  const minutosRestantes = tokenValido ? Math.ceil((tokenExpira - Date.now()) / 60000) : 0;
+
   const html = `<!DOCTYPE html><html><head><base target="_top">
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, Roboto, Arial, sans-serif; background:#0f1115; color:#e8e8e8;
-         margin:0; padding:20px; max-width:420px; margin-left:auto; margin-right:auto;
-         display:flex; flex-direction:column; align-items:center; min-height:100vh; justify-content:center; }
-  h1 { font-size:19px; margin:0 0 24px; text-align:center; }
+         margin:0; padding:20px; max-width:420px; margin-left:auto; margin-right:auto; }
+  h1 { font-size:19px; margin:24px 0; text-align:center; }
   button { background:#1a73e8; color:white; border:none; border-radius:14px; padding:18px 32px;
            font-size:17px; font-weight:600; width:100%; cursor:pointer; }
   button:disabled { background:#3a3d44; }
+  input { width:100%; padding:13px; border-radius:10px; border:1px solid #3a3d44;
+          background:#1a1d24; color:#e8e8e8; font-size:15px; margin-bottom:10px; }
   #resultado { margin-top:20px; font-size:14px; white-space:pre-wrap; background:#1a1d24;
                border-radius:12px; padding:14px; width:100%; display:none; }
   #ultima { margin-top:16px; font-size:12px; color:#9aa0a6; white-space:pre-wrap; text-align:center; }
+  .card { background:#1a1d24; border-radius:14px; padding:16px; margin-bottom:16px; }
+  .estado { font-size:13px; margin-bottom:14px; text-align:center; }
+  .ok { color:#5ec98f; } .warn { color:#f2a94e; }
+  .login-res { font-size:13px; margin-top:8px; text-align:center; white-space:pre-wrap; }
 </style></head><body>
   <h1>📊 Monitor de Inversiones</h1>
+
+  <div class="card">
+    <div id="estadoToken" class="estado ${tokenValido ? 'ok' : 'warn'}">
+      ${tokenValido ? '🔓 Sesión IOL activa (~' + minutosRestantes + ' min)' : '🔒 Sesión IOL vencida — iniciá sesión'}
+    </div>
+    <input type="email" id="usuario" placeholder="Email de IOL" autocomplete="username">
+    <input type="password" id="password" placeholder="Contraseña de IOL" autocomplete="current-password">
+    <button id="btnLogin" onclick="login()">🔐 Iniciar sesión IOL</button>
+    <div id="loginRes" class="login-res"></div>
+  </div>
+
   <button id="btn" onclick="actualizar()">🔄 Actualizar Todo</button>
   <div id="resultado"></div>
   <div id="ultima">${ultimaNota ? 'Última corrida:\n' + ultimaNota : ''}</div>
   <script>
+    function login() {
+      const btn  = document.getElementById('btnLogin');
+      const res  = document.getElementById('loginRes');
+      const usuario  = document.getElementById('usuario').value.trim();
+      const password = document.getElementById('password').value;
+      if (!usuario || !password) { res.textContent = 'Completá usuario y contraseña.'; return; }
+      btn.disabled = true;
+      btn.textContent = '⏳ Conectando...';
+      res.textContent = '';
+      google.script.run
+        .withSuccessHandler(function() {
+          btn.disabled = false;
+          btn.textContent = '🔐 Iniciar sesión IOL';
+          res.textContent = '✅ Sesión iniciada (válida ~30 min)';
+          document.getElementById('password').value = '';
+          document.getElementById('estadoToken').textContent = '🔓 Sesión IOL activa (~30 min)';
+          document.getElementById('estadoToken').className = 'estado ok';
+        })
+        .withFailureHandler(function(err) {
+          btn.disabled = false;
+          btn.textContent = '🔐 Iniciar sesión IOL';
+          res.textContent = '❌ ' + err.message;
+        })
+        .loginIOL(usuario, password);
+    }
+
     function actualizar() {
       const btn = document.getElementById('btn');
       const res = document.getElementById('resultado');
@@ -1346,6 +1422,16 @@ function doGet(e) {
 // trigger diario) — un Web App tampoco tiene UI disponible.
 function webActualizar() {
   return actualizarTodoSilencioso();
+}
+
+// Server-side: login IOL desde el formulario web (v3.32) — mismo pedido
+// de token que hace _getTokenIOL() por popup, pero sin depender de
+// SpreadsheetApp.getUi() (que no existe en un Web App). La contraseña
+// llega como parámetro de esta llamada y no se guarda en ningún lado —
+// mismo criterio que el login por popup, "usar y tirar".
+function loginIOL(usuario, password) {
+  _solicitarTokenIOL(usuario, password);
+  return true;
 }
 
 // ─────────────────────────────────────────────

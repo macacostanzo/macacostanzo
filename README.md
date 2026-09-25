@@ -107,6 +107,29 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.32 — Se puede iniciar sesión de IOL desde el celular
+
+Pregunta directa, después de aclarar que sin sesión activa el botón del
+celu no trae datos nuevos: "¿Puedo loggearme desde el celu?"
+
+Hasta ahora la respuesta era no: el único login posible era el popup de
+`SpreadsheetApp.getUi().prompt()`, que solo existe con la planilla abierta
+en el menú de Sheets — no dentro de un Web App ni en la app de Sheets
+para celular.
+
+**Fix**: la misma página web del botón "Actualizar Todo" (v3.30) ahora
+tiene arriba un formulario de usuario/contraseña de IOL, con el estado
+de la sesión actual ("🔓 activa (~X min)" o "🔒 vencida"). Se logueás ahí,
+en el celular, sin pasar por Sheets. `_getTokenIOL()` se separó en
+`_solicitarTokenIOL(usuario, password)` para que la reuse tanto el popup
+del menú (uso de siempre) como este login web nuevo — mismo pedido de
+token, dos formas de juntar las credenciales.
+
+Se mantiene el mismo criterio de seguridad que ya existía y que el
+usuario explícitamente eligió no cambiar: la contraseña **nunca se
+guarda** en ningún lado — se usa una sola vez para pedir el token (válido
+30 min) y se descarta apenas termina la función.
+
 ## v3.31 — Fix: token IOL vencido se ocultaba como "0 movimientos nuevos"
 
 Reportado probando el botón del celu (v3.30): tocó "Actualizar Todo" y el
