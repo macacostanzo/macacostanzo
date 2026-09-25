@@ -1,8 +1,19 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.29                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.30                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.30:                                               ║
+ * ║  - Botón "Actualizar Todo" usable desde el celular: el menú     ║
+ * ║    "📊 Inversiones" no existe en la app de Sheets para celular  ║
+ * ║    (solo en la versión de escritorio del navegador), así que   ║
+ * ║    correr una actualización a demanda desde el celu era        ║
+ * ║    imposible sin "modo escritorio". Nuevo doGet()/              ║
+ * ║    webActualizar(): implementando este script como "Aplicación ║
+ * ║    web" (Ejecutar como: Yo / Acceso: Solo yo) da una URL con    ║
+ * ║    un botón — guardada como acceso directo en la pantalla de   ║
+ * ║    inicio, se abre y se comporta como una app. Reusa            ║
+ * ║    actualizarTodoSilencioso() (v3.25), ya sin UI.               ║
  * ║  CAMBIOS v3.29:                                               ║
  * ║  - Fix en Portfolio → "Flujos de Capital": "Total Depositado"  ║
  * ║    y "Total Retirado" sumaban solo Flujos_TIR!B2:B999,          ║
@@ -1222,6 +1233,80 @@ function actualizarTodoProgramado() {
     return;
   }
   actualizarTodoSilencioso();
+}
+
+// ─────────────────────────────────────────────
+// WEB APP — botón "Actualizar Todo" para el celular
+// ─────────────────────────────────────────────
+// El menú "📊 Inversiones" no existe en la app de Google Sheets para
+// celular (solo en la versión de escritorio del navegador) — por eso
+// "Actualizar Todo" era imposible de correr a demanda desde el celu.
+// Esto expone ese mismo botón como una página web mínima: implementar
+// este script como "Aplicación web" (Extensiones → Apps Script →
+// Implementar → Nueva implementación → Aplicación web — Ejecutar como:
+// Yo / Acceso: Solo yo) da una URL que, guardada como acceso directo en
+// la pantalla de inicio, se abre y se comporta como una app con un botón.
+function doGet(e) {
+  let ultimaNota = '';
+  try {
+    const radar = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Radar');
+    if (radar) ultimaNota = radar.getRange('A1').getNote() || '';
+  } catch(err) {}
+
+  const html = `<!DOCTYPE html><html><head><base target="_top">
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Roboto, Arial, sans-serif; background:#0f1115; color:#e8e8e8;
+         margin:0; padding:20px; max-width:420px; margin-left:auto; margin-right:auto;
+         display:flex; flex-direction:column; align-items:center; min-height:100vh; justify-content:center; }
+  h1 { font-size:19px; margin:0 0 24px; text-align:center; }
+  button { background:#1a73e8; color:white; border:none; border-radius:14px; padding:18px 32px;
+           font-size:17px; font-weight:600; width:100%; cursor:pointer; }
+  button:disabled { background:#3a3d44; }
+  #resultado { margin-top:20px; font-size:14px; white-space:pre-wrap; background:#1a1d24;
+               border-radius:12px; padding:14px; width:100%; display:none; }
+  #ultima { margin-top:16px; font-size:12px; color:#9aa0a6; white-space:pre-wrap; text-align:center; }
+</style></head><body>
+  <h1>📊 Monitor de Inversiones</h1>
+  <button id="btn" onclick="actualizar()">🔄 Actualizar Todo</button>
+  <div id="resultado"></div>
+  <div id="ultima">${ultimaNota ? 'Última corrida:\n' + ultimaNota : ''}</div>
+  <script>
+    function actualizar() {
+      const btn = document.getElementById('btn');
+      const res = document.getElementById('resultado');
+      btn.disabled = true;
+      btn.textContent = '⏳ Actualizando...';
+      res.style.display = 'block';
+      res.textContent = 'Esto puede tardar unos segundos...';
+      google.script.run
+        .withSuccessHandler(function(r) {
+          btn.disabled = false;
+          btn.textContent = '🔄 Actualizar Todo';
+          res.textContent = r.error
+            ? '❌ Error: ' + r.error
+            : '✅ Listo\\nMovimientos nuevos: ' + r.nuevos + '\\n' + r.saldoInfo;
+        })
+        .withFailureHandler(function(err) {
+          btn.disabled = false;
+          btn.textContent = '🔄 Actualizar Todo';
+          res.textContent = '❌ Error: ' + err.message;
+        })
+        .webActualizar();
+    }
+  </script>
+</body></html>`;
+
+  return HtmlService.createHtmlOutput(html)
+    .setTitle('Monitor de Inversiones')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+// Server-side: lo que efectivamente corre cuando se toca el botón.
+// Reusa actualizarTodoSilencioso() (ya sin UI, la misma que usa el
+// trigger diario) — un Web App tampoco tiene UI disponible.
+function webActualizar() {
+  return actualizarTodoSilencioso();
 }
 
 // ─────────────────────────────────────────────

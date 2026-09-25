@@ -107,6 +107,32 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.30 — Botón "Actualizar Todo" desde el celular (Web App)
+
+Pedido, después de una confusión con `monitor_dashboard.js` (que es otra
+cosa — solo-lectura, ver varias cuentas juntas): "Digo con mi planilla
+actual yo desde el celu no puedo actualizar y eso es lo que quiero poder
+hacer". El pedido real era mucho más puntual: poder correr "Actualizar
+Todo" a demanda desde el celular, en la propia planilla.
+
+La causa es simple: el menú "📊 Inversiones" (de donde sale "Actualizar
+Todo") es un menú de Apps Script — **no existe en la app de Google Sheets
+para celular**, solo en la versión de escritorio del navegador. Por eso
+era imposible tocar ese botón desde el celu sin pedir "modo escritorio".
+
+**Fix**: se agregó `doGet(e)` y `webActualizar()` — implementando el mismo
+script como **Aplicación web** (Extensiones → Apps Script → Implementar →
+Nueva implementación → Aplicación web, con "Ejecutar como: Yo" y "Acceso:
+Solo yo"), da una URL con una página mínima: un botón "🔄 Actualizar
+Todo" y el resultado de la última corrida. Guardada como acceso directo
+en la pantalla de inicio del celular, se abre y se comporta como una app
+— sin pasar por Sheets ni por ningún menú.
+
+Reusa `actualizarTodoSilencioso()` (v3.25) tal cual — esa versión ya no
+usa `SpreadsheetApp.getUi()` (necesario porque un Web App, igual que un
+trigger, no tiene UI disponible), así que no hizo falta tocar nada de esa
+lógica, solo exponerla.
+
 ## v3.29 — Fix Portfolio: "Flujos de Capital" solo miraba hasta la fila 999
 
 Reporte (cuenta de Jose, mientras se investigaba otro tema de saldo): "En
