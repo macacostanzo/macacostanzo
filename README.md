@@ -107,6 +107,42 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.31 — Fix: token IOL vencido se ocultaba como "0 movimientos nuevos"
+
+Reportado probando el botón del celu (v3.30): tocó "Actualizar Todo" y el
+resultado mostró "✅ Listo, Movimientos nuevos: 0" pero también
+"⚠️ Saldo: no se pudo actualizar (Cannot call SpreadsheetApp.getUi() from
+this context.)".
+
+La causa real: el token de IOL dura 30 minutos, y para renovarlo
+`_getTokenIOL()` pide usuario/contraseña con un popup — algo que solo
+existe si hay una sesión interactiva abierta (el menú de Sheets). Desde
+el botón del celu o el trigger diario no hay eso, así que pedir el popup
+directamente tira un error interno de Google poco claro. El problema no
+era solo ese mensaje confuso: `importarMovimientosIOL()` atrapaba ese
+mismo crash y devolvía `0` como si simplemente no hubiera movimientos
+nuevos — **ocultando** que en realidad no se pudo traer nada de IOL. Con
+suerte se notaba por el mensaje de saldo al lado, pero no siempre iba a
+fallar también el saldo al mismo tiempo.
+
+**Fix**: `_getTokenIOL()` ahora detecta si hay sesión interactiva antes
+de intentar el popup, y si no la hay tira un error claro explicando qué
+pasó y qué hacer. `importarMovimientosIOL()` ya no esconde ese error
+como un `0` silencioso — lo deja subir para que se reporte como error
+real.
+
+**Lo que esto NO resuelve**: sin sesión interactiva abierta, el trigger
+diario y el botón del celu solo van a poder traer datos nuevos de IOL si
+el token sigue vigente de un login manual de los últimos 30 minutos —
+fuera de esa ventana, la actualización automática recalcula con lo que
+ya hay guardado en la planilla, pero no trae movimientos/saldo/precios
+nuevos de IOL. Ahora esto se va a REPORTAR con claridad en vez de
+esconderse, pero seguir necesitando login manual cada 30 min le saca
+buena parte del sentido a la automatización — se está evaluando aparte
+si vale la pena guardar las credenciales para renovar el token sin
+intervención humana (trade-off de seguridad real, no una decisión para
+tomar sin preguntar).
+
 ## v3.30 — Botón "Actualizar Todo" desde el celular (Web App)
 
 Pedido, después de una confusión con `monitor_dashboard.js` (que es otra

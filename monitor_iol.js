@@ -1,8 +1,25 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.30                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.31                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.31:                                               ║
+ * ║  - Fix: usando el botón del celu (v3.30), el token IOL vencido ║
+ * ║    (dura 30 min) hacía crashear _getTokenIOL() con un error     ║
+ * ║    interno de Google poco claro — y peor, importarMovimientosIOL║
+ * ║    atrapaba ese crash y devolvía "0 movimientos nuevos" como si ║
+ * ║    hubiera funcionado, ocultando que en realidad no se trajo    ║
+ * ║    nada de IOL. Ahora _getTokenIOL() tira un error claro cuando ║
+ * ║    no hay sesión interactiva para renovar el token, e           ║
+ * ║    importarMovimientosIOL() ya no lo esconde como éxito.        ║
+ * ║  - Esto NO resuelve el problema de fondo: sin una sesión         ║
+ * ║    interactiva abierta, el trigger diario y el botón del celu   ║
+ * ║    solo pueden traer datos nuevos de IOL si el token sigue       ║
+ * ║    vigente de una sesión manual reciente (dura 30 min). Fuera   ║
+ * ║    de eso, "Actualizar Todo" corre igual y recalcula con lo que ║
+ * ║    ya hay en la planilla, pero no trae movimientos/saldo/       ║
+ * ║    precios nuevos — y ahora al menos lo va a decir, no a         ║
+ * ║    esconderlo.                                                   ║
  * ║  CAMBIOS v3.30:                                               ║
  * ║  - Botón "Actualizar Todo" usable desde el celular: el menú     ║
  * ║    "📊 Inversiones" no existe en la app de Sheets para celular  ║
@@ -507,8 +524,24 @@ function _getTokenIOL() {
   // Reutilizar token si todavía es válido
   if (tokenGuard && Date.now() < tokenExpira) return tokenGuard;
 
-  // Token vencido → pedir credenciales
-  const ui = SpreadsheetApp.getUi();
+  // Token vencido → pedir credenciales. Pero SpreadsheetApp.getUi() en sí
+  // ya tira si no hay una sesión interactiva (trigger automático, botón
+  // Web App) — sin este chequeo, ese crash quedaba con un mensaje interno
+  // de Google ("Cannot call SpreadsheetApp.getUi() from this context")
+  // que no decía qué hacer, y algunos llamadores (importarMovimientosIOL)
+  // lo atrapaban y devolvían "0 movimientos nuevos" como si no hubiera
+  // pasado nada — en vez de avisar que en realidad no se pudo traer nada.
+  let ui;
+  try {
+    ui = SpreadsheetApp.getUi();
+  } catch (e) {
+    throw new Error(
+      'Token IOL vencido (dura 30 min) y no hay una sesión interactiva para ' +
+      'reingresar usuario/contraseña — esto pasa en el trigger automático o ' +
+      'el botón del celular. Abrí la planilla y corré "Actualizar Todo" desde ' +
+      'el menú para renovar la sesión a mano.'
+    );
+  }
   ui.alert(
     '🔐 Acceso IOL',
     'El token venció. Se pedirán usuario y contraseña.\n\n' +
@@ -775,8 +808,14 @@ datos.slice(1).forEach(fila => {
   );
     if (!Array.isArray(operaciones)) operaciones = [];
   } catch(e) {
+    // v3.31: antes devolvía 0 acá — "0 movimientos nuevos" se mostraba
+    // como si hubiera funcionado, cuando en realidad el fetch a IOL había
+    // fallado (típicamente token vencido sin sesión interactiva para
+    // renovarlo, desde el trigger o el botón del celular). Ahora se
+    // relanza para que actualizarTodo()/actualizarTodoSilencioso() lo
+    // reporten como error real, no como "todo al día".
     Logger.log('Error importando movimientos: ' + e.message);
-    return 0;
+    throw e;
   }
 
   // Convertir al formato de la hoja Movimientos
