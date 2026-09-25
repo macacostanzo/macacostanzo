@@ -107,6 +107,30 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.33 — Fix: "Actualizar Todo" desde el celu daba "Error: undefined"
+
+Reportado con captura de pantalla: recién logueada (sesión IOL activa,
+~30 min), tocó "Actualizar Todo" y el resultado fue "❌ Error: undefined"
+— sin ninguna pista de qué había fallado.
+
+**Causa**: `generarRadar()` era el único paso de `_actualizarTodoCore()`
+que corría **sin** try/catch a su alrededor (todos los demás — importar
+movimientos, actualizar saldo, el resto — sí lo tienen). Si tiraba algo
+ahí adentro, el error se escapaba crudo fuera de la función, hasta el
+cliente — y un error de Apps Script sin agarrar no siempre le llega al
+navegador con `.message` poblado, de ahí el "undefined" sin contenido.
+
+**Fix**: `generarRadar()` ahora corre dentro de su propio try/catch, igual
+que el resto de los pasos — si falla, el motivo real queda en el
+resultado en vez de romper todo con un mensaje vacío. Además, los
+manejadores de error de la página web (login y "Actualizar Todo") ya no
+muestran "undefined" pelado si el error no trae `.message` — caen a un
+texto genérico legible ("Error desconocido — reintentá").
+
+Si la próxima vez que falle generarRadar() se ve el motivo real en la
+página, hay que volver a mirarlo con ese dato — esto solo evita que el
+error quede mudo, no dice todavía por qué fallaba puntualmente esta vez.
+
 ## v3.32 — Se puede iniciar sesión de IOL desde el celular
 
 Pregunta directa, después de aclarar que sin sesión activa el botón del

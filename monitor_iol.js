@@ -1,8 +1,20 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.32                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.33                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.33:                                               ║
+ * ║  - Fix: tocando "Actualizar Todo" desde el celu (recién          ║
+ * ║    logueada, sesión IOL activa) daba "❌ Error: undefined" sin   ║
+ * ║    ninguna pista. Causa: generarRadar() corría SIN try/catch     ║
+ * ║    dentro de _actualizarTodoCore() (a diferencia de cada otro    ║
+ * ║    paso) — si tiraba algo, el error se escapaba crudo hasta el   ║
+ * ║    cliente, y un error sin agarrar no siempre llega con          ║
+ * ║    .message al navegador ("undefined"). Ahora queda contenido    ║
+ * ║    como el resto de los pasos, con el mensaje real visible.      ║
+ * ║  - Los manejadores de error de la página web (v3.30/v3.32) ya   ║
+ * ║    no muestran "undefined" pelado si err.message no viene —      ║
+ * ║    caen a un mensaje genérico legible.                            ║
  * ║  CAMBIOS v3.32:                                               ║
  * ║  - Se puede iniciar sesión de IOL desde el celular: la página   ║
  * ║    web del botón "Actualizar Todo" (v3.30) ahora tiene arriba   ║
@@ -1248,7 +1260,20 @@ function _actualizarTodoCore() {
     Logger.log('Error en actualizarTodo: ' + e.message + '\n' + e.stack);
     resultado.error = e.message;
   }
-  generarRadar();
+
+  // v3.33: generarRadar() corría SIN protección, afuera del try/catch de
+  // arriba — si tiraba algo (ej. una fórmula sobre datos que quedaron a
+  // medio actualizar por el error anterior), el error se escapaba crudo
+  // hasta el cliente. En el Web App eso se vio como "❌ Error: undefined"
+  // (un error sin agarrar no siempre llega con .message al navegador) —
+  // sin ninguna pista de qué había fallado. Ahora queda contenido acá y
+  // el mensaje real queda visible en el resultado.
+  try {
+    generarRadar();
+  } catch(e) {
+    Logger.log('Error en generarRadar: ' + e.message + '\n' + e.stack);
+    resultado.error = (resultado.error ? resultado.error + ' | ' : '') + 'generarRadar: ' + e.message;
+  }
   return resultado;
 }
 
@@ -1382,7 +1407,7 @@ function doGet(e) {
         .withFailureHandler(function(err) {
           btn.disabled = false;
           btn.textContent = '🔐 Iniciar sesión IOL';
-          res.textContent = '❌ ' + err.message;
+          res.textContent = '❌ ' + (err && err.message ? err.message : 'Error desconocido — reintentá.');
         })
         .loginIOL(usuario, password);
     }
@@ -1405,7 +1430,7 @@ function doGet(e) {
         .withFailureHandler(function(err) {
           btn.disabled = false;
           btn.textContent = '🔄 Actualizar Todo';
-          res.textContent = '❌ Error: ' + err.message;
+          res.textContent = '❌ Error: ' + (err && err.message ? err.message : 'Error desconocido — reintentá.');
         })
         .webActualizar();
     }
