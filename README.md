@@ -107,6 +107,22 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.34 — Link directo a la planilla desde la página del botón
+
+Pedido: "Si haría que el enlace donde pongo el Mail y contraseña me dé el
+link del monitor así de ahí ya abro el sheet". No se trataba del
+Monitor Consolidado (ese sigue sin instalar) — el pedido era mucho más
+puntual: desde la misma página de login/"Actualizar Todo", poder pasar
+directo a la Google Sheet real, sin ir a buscarla aparte.
+
+**Fix**: `doGet()` ahora agrega, debajo del botón "Actualizar Todo", un
+link **"📄 Abrir planilla completa"** que apunta a la URL de la propia
+Google Sheet (`SpreadsheetApp.getActiveSpreadsheet().getUrl()` — cada
+planilla ya sabe su propia URL, no hace falta guardarla en ningún lado).
+Flujo completo desde el celu: abrir el acceso directo → loguearse si
+hace falta → Actualizar Todo → tocar el link → ver los datos frescos en
+la Sheet real.
+
 ## v3.33 — Fix: "Actualizar Todo" desde el celu daba "Error: undefined"
 
 Reportado con captura de pantalla: recién logueada (sesión IOL activa,

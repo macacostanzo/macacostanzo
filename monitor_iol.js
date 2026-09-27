@@ -1,8 +1,14 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.33                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.34                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.34:                                               ║
+ * ║  - La página del botón (login + Actualizar Todo) ahora tiene   ║
+ * ║    abajo un link "📄 Abrir planilla completa" a la Google       ║
+ * ║    Sheet de esta misma cuenta — así, después de loguearse y     ║
+ * ║    actualizar desde el celu, se pasa a ver los datos frescos    ║
+ * ║    sin salir a buscar la planilla a mano.                       ║
  * ║  CAMBIOS v3.33:                                               ║
  * ║  - Fix: tocando "Actualizar Todo" desde el celu (recién          ║
  * ║    logueada, sesión IOL activa) daba "❌ Error: undefined" sin   ║
@@ -1343,6 +1349,14 @@ function doGet(e) {
     if (radar) ultimaNota = radar.getRange('A1').getNote() || '';
   } catch(err) {}
 
+  // v3.34: link directo a la planilla — así, después de loguearse y
+  // actualizar desde el celu, se puede pasar a ver los datos frescos sin
+  // salir de esta misma página a buscarla a mano.
+  let urlSheet = '';
+  try {
+    urlSheet = SpreadsheetApp.getActiveSpreadsheet().getUrl();
+  } catch(err) {}
+
   // v3.32: estado del token al cargar la página — así se ve de entrada
   // si hace falta loguearse antes de tocar "Actualizar Todo", en vez de
   // enterarse recién después de tocarlo y que falle.
@@ -1365,6 +1379,8 @@ function doGet(e) {
   #resultado { margin-top:20px; font-size:14px; white-space:pre-wrap; background:#1a1d24;
                border-radius:12px; padding:14px; width:100%; display:none; }
   #ultima { margin-top:16px; font-size:12px; color:#9aa0a6; white-space:pre-wrap; text-align:center; }
+  .abrir-sheet { display:block; text-align:center; margin-top:18px; padding:14px; border-radius:14px;
+                 border:1px solid #3a3d44; color:#8ab4f8; text-decoration:none; font-size:15px; font-weight:600; }
   .card { background:#1a1d24; border-radius:14px; padding:16px; margin-bottom:16px; }
   .estado { font-size:13px; margin-bottom:14px; text-align:center; }
   .ok { color:#5ec98f; } .warn { color:#f2a94e; }
@@ -1385,6 +1401,7 @@ function doGet(e) {
   <button id="btn" onclick="actualizar()">🔄 Actualizar Todo</button>
   <div id="resultado"></div>
   <div id="ultima">${ultimaNota ? 'Última corrida:\n' + ultimaNota : ''}</div>
+  ${urlSheet ? `<a class="abrir-sheet" href="${urlSheet}" target="_blank">📄 Abrir planilla completa →</a>` : ''}
   <script>
     function login() {
       const btn  = document.getElementById('btnLogin');
