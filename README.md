@@ -107,6 +107,15 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.36 — Ratio de TSM confirmado (9:1)
+
+Maki confirmó el ratio real de TSM (9 CEDEARs = 1 acción ordinaria) y
+completó Equivalencias ella misma. Se agregó `['TSM',9,1]` a
+`poblarRatios()` — mismo formato que el resto (BABA tiene el mismo 9:1,
+por ejemplo). Con esto "Precio Teórico"/arbitraje ARS-USD en Radar ya
+funciona para TSM también, cerrando el pendiente que había quedado
+abierto en v3.35.
+
 ## v3.35 — Agregado TSM (Taiwan Semiconductor) a Equivalencias
 
 Alerta: "Tickers sin clasificar en Equivalencias: TSM". Se verificó contra

@@ -1,8 +1,13 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.35                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.36                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.36:                                               ║
+ * ║  - Ratio de TSM confirmado por Maki (9 CEDEARs = 1 acción) —   ║
+ * ║    agregado a poblarRatios(), ya que get_asset_info de IOL no  ║
+ * ║    lo expone. Con esto "Precio Teórico"/arbitraje en Radar ya  ║
+ * ║    funciona para TSM también, no solo Equivalencias.            ║
  * ║  CAMBIOS v3.35:                                               ║
  * ║  - Agregado TSM/TSMD (Taiwan Semiconductor) a Equivalencias —  ║
  * ║    ticker nuevo detectado como "sin clasificar". Confirmado    ║
@@ -4058,7 +4063,7 @@ function poblarRatios() {
     ['V',18,1],['MA',33,1],['JNJ',15,1],['UNH',33,1],['HD',32,1],
     ['PG',15,1],['KO',5,1],['PEP',18,1],['MCD',24,1],['DIS',12,1],
     ['MELI',120,1],['NU',2,1],['GLOB',18,1],['BABA',9,1],['INTC',5,1],
-    ['AMD',10,1],['QCOM',11,1],['AVGO',39,1],['CSCO',5,1],['IBM',15,1],
+    ['AMD',10,1],['QCOM',11,1],['AVGO',39,1],['TSM',9,1],['CSCO',5,1],['IBM',15,1],
     ['ORCL',3,1],['ADBE',44,1],['CRM',18,1],['COIN',27,1],['PLTR',3,1],
     ['UBER',2,1],['PYPL',8,1],['SHOP',107,1],['BKNG',700,1],
     ['SPY',20,1],['QQQ',20,1],['GLD',50,1],['SLV',6,1],['GDX',10,1],
