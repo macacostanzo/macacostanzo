@@ -1,8 +1,17 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.34                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.35                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.35:                                               ║
+ * ║  - Agregado TSM/TSMD (Taiwan Semiconductor) a Equivalencias —  ║
+ * ║    ticker nuevo detectado como "sin clasificar". Confirmado    ║
+ * ║    contra la API de IOL: TSM=ARS, TSMD=USD, mismo par de        ║
+ * ║    siempre (get_asset_info → related_symbols). NO se agregó     ║
+ * ║    ratio en Ratios_CEDEAR todavía — no hay forma de verificar   ║
+ * ║    el ratio real sin adivinar, así que queda pendiente (solo    ║
+ * ║    afecta "Precio Teórico"/arbitraje en Radar, no Posiciones    ║
+ * ║    ni TIR).                                                       ║
  * ║  CAMBIOS v3.34:                                               ║
  * ║  - La página del botón (login + Actualizar Todo) ahora tiene   ║
  * ║    abajo un link "📄 Abrir planilla completa" a la Google       ║
@@ -3896,6 +3905,8 @@ function poblarEquivalencias() {
     ['TM','TM','TM','Toyota Motor Corp.','ARS','Renta Variable','CEDEAR','','NYSE'],
     ['TSLA','TSLA','TSLA','Tesla Inc.','ARS','Renta Variable','CEDEAR','','NASDAQ'],
     ['TSLAD','TSLA','TSLA','Tesla Inc. (USD)','USD','Renta Variable','CEDEAR','','NASDAQ'],
+    ['TSM','TSM','TSM','Taiwan Semiconductor Manufacturing','ARS','Renta Variable','CEDEAR','','NYSE'],
+    ['TSMD','TSM','TSM','Taiwan Semiconductor Manufacturing (USD)','USD','Renta Variable','CEDEAR','','NYSE'],
     ['TXN','TXN','TXN','Texas Instruments Inc.','ARS','Renta Variable','CEDEAR','','NASDAQ'],
     ['UBER','UBER','UBER','Uber Technologies','ARS','Renta Variable','CEDEAR','','NYSE'],
     ['UNH','UNH','UNH','UnitedHealth Group Inc.','ARS','Renta Variable','CEDEAR','','NYSE'],

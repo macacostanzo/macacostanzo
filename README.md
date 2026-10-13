@@ -107,6 +107,23 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.35 — Agregado TSM (Taiwan Semiconductor) a Equivalencias
+
+Alerta: "Tickers sin clasificar en Equivalencias: TSM". Se verificó contra
+la API de IOL (`get_asset_info`) en vez de adivinar: TSM es un CEDEAR,
+moneda ARS, con par en dólares TSMD — mismo patrón AAPL/AAPLD de siempre.
+Se agregó el par completo a `poblarEquivalencias()`, así que de acá en
+más se precarga solo en cualquier planilla (Maki, Frank, Trini, Jose) sin
+que haga falta volver a completarlo a mano cada vez que alguien lo opera
+por primera vez.
+
+**Pendiente**: no se agregó el ratio de TSM en `Ratios_CEDEAR` — IOL no
+devolvió un precio de TSM en NYSE para calcularlo contra el precio del
+CEDEAR, y no hay forma de verificarlo sin inventar un número. Mientras
+tanto, "Precio Teórico"/arbitraje ARS-USD para TSM en Radar no va a
+funcionar (sale en blanco), pero Posiciones, Costo, G/P y TIR sí
+calculan bien ya con el fix de Equivalencias solo.
+
 ## v3.34 — Link directo a la planilla desde la página del botón
 
 Pedido: "Si haría que el enlace donde pongo el Mail y contraseña me dé el
