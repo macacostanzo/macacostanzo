@@ -1,8 +1,23 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.36                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.37                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.37:                                               ║
+ * ║  - Fix de fondo en Equivalencias: TLCPD estaba con Moneda_Op=  ║
+ * ║    ARS (igual que su par TLCPO), rompiendo el patrón D=USD de  ║
+ * ║    siempre (TLCMD/TLCMO, TLCTD/TLCTO sí lo tenían bien). Por    ║
+ * ║    eso una Compra(TLCPD) nueva se importaba como "Inversion     ║
+ * ║    Argentina Pesos" en vez de Dolares, y su precio (ya en USD)  ║
+ * ║    terminaba dividido por el MEP de más — Monto Invertido de    ║
+ * ║    una compra de 500 nominales (~USD 500 reales) salía muy      ║
+ * ║    por debajo de eso. Corregido a USD.                          ║
+ * ║  - Se revisó TODA la tabla de Equivalencias buscando el mismo   ║
+ * ║    patrón (ticker D emparejado con su base, ambos con la misma  ║
+ * ║    moneda) — el único caso real era TLCPD. El otro candidato    ║
+ * ║    que apareció (BBD) no es un par de monedas, es un ticker      ║
+ * ║    totalmente distinto (Banco Bradesco) que por casualidad       ║
+ * ║    termina en D como BB (BlackBerry) — se descartó.              ║
  * ║  CAMBIOS v3.36:                                               ║
  * ║  - Ratio de TSM confirmado por Maki (9 CEDEARs = 1 acción) —   ║
  * ║    agregado a poblarRatios(), ya que get_asset_info de IOL no  ║
@@ -4019,8 +4034,8 @@ function poblarEquivalencias() {
     ['TD','T','T','AT&T Inc.','USD','Renta Variable','CEDEAR','','NYSE'],
     ['TECO2','TECO2','','Telecom Argentina S.A.','ARS','Renta Variable','Accion','',''],
     ['TGT','TGT','TGT','Target Corp.','ARS','Renta Variable','CEDEAR','','NYSE'],
-    ['TLCPD','TLCPO','','ON Telecom serie PO','ARS','Renta Fija','ON','Telecom Argentina',''],
-    ['TLCPO','TLCPO','','ON Telecom serie PO','ARS','Renta Fija','ON','Telecom Argentina',''],
+    ['TLCPD','TLCPO','','ON Telecom serie PO USD','USD','Renta Fija','ON','Telecom Argentina',''],
+    ['TLCPO','TLCPO','','ON Telecom serie PO ARS','ARS','Renta Fija','ON','Telecom Argentina',''],
     ['TMD','TM','TM','Toyota Motor Corp.','USD','Renta Variable','CEDEAR','','NYSE'],
     ['TO23','TO23','','Bono TO23','ARS','Renta Fija','Bono','Tesoro Nacional',''],
     ['TO26','TO26','','Bono TO26','ARS','Renta Fija','Bono','Tesoro Nacional',''],

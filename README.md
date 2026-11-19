@@ -107,6 +107,37 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.37 — Fix TLCPD: Equivalencias tenía el par ARS/USD mal cargado
+
+Reporte: "la compra de 500 nominales de hoy de tlcpd está poniendo mal
+el monto invertido que debería ser del orden de 500usd".
+
+Causa encontrada directo en la data, sin necesidad de reconstruir nada
+con el MEP: **TLCPD estaba cargado con Moneda_Op=ARS en Equivalencias**,
+igual que su par TLCPO — rompiendo el patrón D=USD que sí tenían bien
+sus hermanos (TLCMD/TLCMO, TLCTD/TLCTO). Como `importarMovimientosIOL()`
+usa esa misma tabla para decidir si una Compra/Venta nueva es en pesos o
+dólares (`esUSD = eqMap[ticker].moneda === 'USD'`), la compra de hoy se
+importó etiquetada "Inversion Argentina Pesos" en vez de "Dolares", y su
+precio (que ya estaba en USD) terminó dividido por el MEP de más — el
+mismo mecanismo de fondo que GD29/PBA25/BDC24, pero esta vez el error
+estaba en el dato semilla de Equivalencias, no en la lógica de
+conversión.
+
+**Fix**: TLCPD corregido a Moneda_Op=USD en `poblarEquivalencias()`. Se
+revisó además TODA la tabla buscando el mismo patrón (ticker-D
+emparejado con su base, misma moneda en los dos) — el único caso real
+era TLCPD; el otro que salió en el barrido (BBD) no es un par de
+monedas, es Banco Bradesco, un ticker sin relación con BB (BlackBerry)
+que coincide en terminar en D por casualidad — descartado.
+
+**Para la fila ya importada hoy**: corregir Equivalencias (ya sea
+pegando este script o a mano en la fila de TLCPD) no alcanza sola — la
+fila mala ya quedó escrita en Movimientos. Hace falta además correr
+"🔧 Reparar Tipo Cuenta (precios USD mal etiquetados)" para corregir esa
+fila puntual, y recién después "Actualizar Todo" para que Posiciones/
+Detalle_Compras recalculen con el dato bien.
+
 ## v3.36 — Ratio de TSM confirmado (9:1)
 
 Maki confirmó el ratio real de TSM (9 CEDEARs = 1 acción ordinaria) y
