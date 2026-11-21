@@ -107,6 +107,101 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.38 — Revisión independiente (Opus): 3 fixes aplicados, varios pendientes de decisión
+
+A pedido explícito ("revisa con fable la planilla y el código y evalúalo"),
+se corrió una revisión independiente de todo el código y de la planilla
+real de Maki (Fable falló por falta de créditos; se corrió con Opus en su
+lugar). El agente tuvo acceso a Drive y verificó cada hallazgo contra los
+datos reales, no solo leyendo el código.
+
+**Arreglado ya** (bugs concretos, sin ambigüedad, bajo riesgo):
+
+1. **Grave — token vencido pisaba todo con $0.** Antes, si el token de
+   IOL vencía, cada función que pega contra la API (`_obtenerPreciosIOL`,
+   `_fetchIOLBatch`) atrapaba el error por separado y el script seguía de
+   largo calculando con precios en $0 — Posiciones/Portfolio quedaban
+   pisados con valuaciones en cero, y Radar llegaba a sugerir comprar
+   miles de dólares de más con el portfolio entero en $0. Esto se iba a
+   disparar justo con el flujo que más se usa ahora (botón del celu,
+   trigger diario) cada vez que el token de 30 min ya estuviera vencido
+   al momento de correr. `_actualizarTodoCore()` ahora confirma el token
+   ANTES de tocar nada — si no hay sesión válida, no actualiza nada y
+   avisa, en vez de pisar datos buenos.
+2. **La excepción de GD29 aplastaba sus pagos genuinamente en dólares.**
+   GD29 sí tiene renta/amortización marcada "US$" (montos sensatos como
+   USD: 0,73 = 0,5% de 146 nominales; 14,6 = 10% exacto) mezclada con
+   pagos en pesos — pero la excepción de v3.21 trataba TODO como pesos
+   sin mirar el sufijo. Resultado: ~USD 22,5 de ingresos reales se
+   registraban como USD 0,04 en Historial. Ahora se respeta el sufijo
+   "US$" de la fila cruda.
+3. **Saldo IOL nunca se actualizaba si daba exactamente $0.** Si gastás
+   todo el efectivo de una moneda, la API devuelve 0 correctamente, pero
+   el código solo guardaba el saldo `if (saldoUSD > 0)` — un 0 genuino se
+   descartaba y quedaba el último saldo viejo (positivo) para siempre.
+
+**Pendiente — necesitan una decisión, no los toqué todavía:**
+
+- **TIR/Ganancia Total sobrestimadas.** Dos causas en los datos reales:
+  (a) las filas "Crédito" (85, USD 598 total) se cuentan como retiros
+  cuando son dinero entrando a la cuenta (probablemente intereses, salvo
+  una de USD 448,88 el 18/11/2025 que podría ser una transferencia
+  externa real — hay que confirmar qué es); (b) los depósitos en pesos
+  de `Ingresos_Egresos` se convierten al MEP de HOY en vez del MEP de la
+  fecha del depósito (10 filas, ARS 10,5M desde mayo 2026), a pesar de
+  que la etiqueta de Portfolio dice "usando MEP histórico". Recalculado:
+  TIR pasaría de 7,20% a ~5,46%, y Ganancia Total de USD 4.428 a
+  ~USD 3.365 (sobrestimada en ~USD 1.063).
+- **Pregunta de fondo que ya tiene respuesta validada**: ¿el parche
+  ticker-por-ticker (GD29/PBA25/BDC24) sigue siendo lo correcto, o ya
+  conviene una regla general? El agente probó una regla general contra
+  los 1.072 movimientos de renta/dividendo/amortización reales de Maki:
+  **la moneda de estos pagos se puede leer del sufijo "US$" de la fila
+  cruda, no de "Tipo Cuenta"** — y para Compra/Venta, de Moneda_Op en
+  Equivalencias (con GD29 corregido a ARS ahí, como sus hermanos
+  GD30/35/38/41). Esa regla reproduce exactamente las 25 excepciones
+  hardcodeadas actuales sin ningún ticker especial, y de paso arregla el
+  bug #2 de arriba. Falta: ajustar `importarMovimientosIOL()` para que
+  no invente el sufijo "US$" en pagos de renta (hoy lo agrega según
+  Equivalencias, lo cual rompería la nueva regla), y confirmar que el
+  patrón se sostenga en Frank/Trini/Jose, no solo en esta cuenta.
+- **Comisiones ausentes desde mayo 2026.** Los 106 trades importados por
+  API desde entonces tienen Monto = Cant×Precio exacto, Comis = 0 — antes
+  todas las compras pegadas a mano traían comisión (mediana ~1,27% del
+  bruto). Afecta Costo/G-P/TIR por ticker y por clase en ~USD 200+ sobre
+  USD 17,8k operados; el TIR de Portfolio no se ve afectado porque usa el
+  efectivo real de la API. Falta confirmar si la API de IOL expone la
+  comisión en algún campo antes de tocar nada.
+- **Radar, 3 secciones con problemas**: "Arbitraje ARS/USD" filtra por la
+  columna equivocada (termina marcando las 27 CEDEARs con el mismo ~6%,
+  que parece ser el gap MEP-vs-CCL, no sobreprecio real) y tiene un typo
+  de formato ("08%" en vez de "7,5%"); "Sugerencia de Inversión" nunca
+  sugiere nada mientras el target de Renta Mixta (10%) no tenga ninguna
+  posición — se come todo el presupuesto; "Alertas Renta Fija" está
+  muerta porque la cotización de IOL no devuelve el campo de TIR.
+- **Sin lock entre corridas simultáneas** (`LockService`) — si el botón
+  del celu y el trigger diario corren a la vez, pueden duplicar filas o
+  chocar en Historial.
+- **Menores** (bajo impacto, no urgentes): tres filas de más en
+  Equivalencias (MSFDT/PAMPAD/QQDD) hacen que QQQ se cotice mal por una
+  de ellas; reversas negativas de renta (CRCEO) se ignoran y duplican
+  ~USD 15; el canje BOPREAL no arrastra costo base bien; bonos que
+  amortizan (IRCFO) muestran G/P de -50% en Posiciones aunque el retorno
+  total y el TIR estén bien; 4 precios en Movimientos están guardados
+  como texto y se leen ~100x de menos (no afecta Costo, que usa Monto);
+  posible doble conteo de depósitos si se pega un export de IOL que
+  solape con el rango ya cargado a mano en Ingresos_Egresos; el token
+  queda en ScriptProperties (compartido entre quien edite la hoja) en vez
+  de UserProperties; la nota de última corrida en la página web no
+  escapa HTML (bajo riesgo, acceso ya es "Solo yo").
+- **Revisado y confirmado SIN problema**: el escaneo de pares D/ARS en
+  Equivalencias no encontró ningún otro TLCPD — BBD, YPFD y BMA.D son
+  excepciones legítimas al patrón "D=dólar". La ganancia realizada de
+  PBA25, el split de YPFD, el precio bajo de CRCEO, la pérdida de TO23 y
+  los rangos de Flujos_TIR (incluido el fix de v3.29) están todos bien.
+
+Decime cuáles de los puntos pendientes querés que encare y en qué orden.
+
 ## v3.37 — Fix TLCPD: Equivalencias tenía el par ARS/USD mal cargado
 
 Reporte: "la compra de 500 nominales de hoy de tlcpd está poniendo mal

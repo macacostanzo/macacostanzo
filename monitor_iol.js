@@ -1,8 +1,25 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.37                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.38                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.38 (de una revisión independiente, ver README):   ║
+ * ║  - Fix grave: con el token IOL vencido, el error se tragaba      ║
+ * ║    por separado en cada función que pega contra la API y el     ║
+ * ║    script seguía de largo calculando con precios en $0 —         ║
+ * ║    Posiciones/Portfolio quedaban PISADOS con valuaciones en      ║
+ * ║    cero (Radar llegaba a sugerir comprar miles de dólares de     ║
+ * ║    más). _actualizarTodoCore() ahora confirma el token ANTES de ║
+ * ║    tocar nada — si no hay sesión, no se actualiza nada y se      ║
+ * ║    conserva el último dato bueno.                                ║
+ * ║  - Fix: la excepción de GD29 (ARS mal etiquetado) aplastaba      ║
+ * ║    también sus pagos de renta/amortización genuinamente en       ║
+ * ║    dólares (marcados "US$"), dejando ~USD 22,5 de ingresos       ║
+ * ║    reales en centavos. Ahora respeta el sufijo "US$" de la fila  ║
+ * ║    cruda.                                                          ║
+ * ║  - Fix: el saldo de IOL solo se guardaba si daba >0 — un saldo   ║
+ * ║    real en $0 (gastaste todo en una moneda) nunca se actualizaba ║
+ * ║    y quedaba el último valor viejo para siempre.                 ║
  * ║  CAMBIOS v3.37:                                               ║
  * ║  - Fix de fondo en Equivalencias: TLCPD estaba con Moneda_Op=  ║
  * ║    ARS (igual que su par TLCPO), rompiendo el patrón D=USD de  ║
@@ -1150,8 +1167,14 @@ function _actualizarSaldoIOL() {
       });
     }
 
-    if (saldoUSD > 0) props.setProperty('saldo_usd', String(saldoUSD));
-    if (saldoARS > 0) props.setProperty('saldo_ars', String(saldoARS));
+    // v3.38: antes solo se guardaba si daba >0 — si gastás todo el saldo
+    // de una moneda, la API devuelve 0 correctamente, pero ese 0 nunca
+    // se guardaba y Portfolio/Flujos_TIR/Radar seguían usando el ÚLTIMO
+    // saldo viejo (positivo) para siempre. Si llegamos hasta acá es
+    // porque la consulta a la API ya funcionó (un error real corta antes,
+    // en el catch de _fetchIOL) — un 0 genuino hay que guardarlo igual.
+    props.setProperty('saldo_usd', String(saldoUSD));
+    props.setProperty('saldo_ars', String(saldoARS));
 
     Logger.log(`Saldo: USD ${saldoUSD} | ARS ${saldoARS}`);
     return { usd: saldoUSD, ars: saldoARS };
@@ -1263,6 +1286,29 @@ function _obtenerPreciosIOL() {
 // el run en la primera línea si no se separa así).
 function _actualizarTodoCore() {
   const resultado = { nuevos: 0, saldoInfo: '', error: null };
+
+  // v3.38: antes, cuando el token estaba vencido, el error se tragaba por
+  // separado en cada función que pega contra la API (_obtenerPreciosIOL,
+  // _fetchIOLBatch) y el script seguía de largo calculando con precios en
+  // $0 — Posiciones/Portfolio quedaban PISADOS con valuaciones en cero en
+  // vez de conservar el último dato bueno (Radar llegaba a sugerir
+  // comprar miles de dólares de más, con el portfolio entero en $0). Esto
+  // se iba a disparar justo con el flujo que más se usa ahora (el botón
+  // del celu o el trigger diario) cada vez que el token de 30 min ya
+  // hubiera vencido al momento de correr.
+  // _getTokenIOL() ya sabe pedir credenciales por popup si hay UI (menú)
+  // o tirar un error claro si no la hay (trigger/Web App) — se llama acá
+  // ANTES de tocar nada, así que si falla (en cualquiera de los dos
+  // casos) se corta antes de pisar ningún dato, en vez de descubrirlo
+  // recién adentro de calcularPosiciones().
+  try {
+    _getTokenIOL();
+  } catch(e) {
+    resultado.error = 'No se pudo confirmar la sesión IOL (' + e.message + ') — no se actualizó ' +
+      'nada para no pisar los datos buenos que ya había con valores en $0.';
+    return resultado;
+  }
+
   try {
     _actualizarMEP();
 
@@ -1955,8 +2001,21 @@ for (let i = 0; i < Math.min(raw.length, 10); i++) {
     //     pesos vía el agente de pago local aunque el título se opere en
     //     dólares. Si aparece otro caso así, usar "🔍 Diagnóstico: Pagos
     //     de Renta/Amortización Implausibles" para confirmarlo primero.
+    //
+    // v3.38: la excepción de GD29 estaba aplicando ARS a TODAS sus filas
+    // sin mirar si venían marcadas "US$" — pero GD29 SÍ tiene pagos de
+    // renta/amortización genuinamente en dólares (ej. "Pago de Renta
+    // (GD29 US$)" = 0,73, exactamente 0,5% de 146 nominales; "Pago de
+    // Amortización(GD29 US$)" = 14,6, exactamente 10% — montos sensatos
+    // como USD directo). La excepción los volvía a dividir por el MEP,
+    // aplastando ~USD 22,5 de ingresos reales a centavos
+    // (Historial mostraba Ingresos=0,04 para GD29 en vez de ~22,5).
+    // Ahora se respeta el sufijo " US$" de la fila cruda — el mismo
+    // sufijo que ya distingue "US$" de pesos en CUALQUIER otro ticker
+    // sin contraparte D (ver finding de la revisión con Opus, v3.38).
+    const esUSDSufijoFila = / US\$\)\s*$/.test(tipoRaw);
     const esARSExcepcion =
-      (ticker === 'GD29') ||
+      (ticker === 'GD29' && !esUSDSufijoFila) ||
       (['PBA25', 'BDC24'].includes(ticker) && (tipo === 'RENTA' || tipo === 'DIVIDENDO' || tipo === 'AMORTIZACION'));
     const esUSD     = !esARSExcepcion && (cuentaTxt.includes('Dolares') || cuentaTxt.includes('Dólares'));
     const mep       = _getCCL(fecha, mepMap);
