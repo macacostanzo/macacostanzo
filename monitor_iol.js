@@ -1,8 +1,24 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.38                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.39                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.39 (fix TIR/Ganancia Total sobrestimadas):         ║
+ * ║  - "Crédito" ya no se cuenta como retiro real. Confirmado con  ║
+ * ║    un caso concreto (comprobante de IOL): un Crédito de         ║
+ * ║    USD 448,88 tenía un Débito de exactamente el mismo monto al  ║
+ * ║    día siguiente — un movimiento interno que se revierte solo, ║
+ * ║    no plata que haya salido de la cuenta. El Débito ya se        ║
+ * ║    ignoraba (cae en "OTRO", el patrón de DEBITO solo reconoce   ║
+ * ║    "Débito - Producto"), pero el Crédito sí sumaba como retiro  ║
+ * ║    — metiendo un retiro fantasma. Ahora se ignora, igual que     ║
+ * ║    Débito/Otro (mismo tratamiento que cualquier interés que      ║
+ * ║    queda como efectivo en la cuenta, igual que Renta/Dividendos).║
+ * ║  - Ingresos_Egresos convertía TODO depósito/extracción en pesos ║
+ * ║    con el MEP de HOY, sin importar la fecha real — a pesar de    ║
+ * ║    que Portfolio dice "usando MEP histórico". Ahora usa el MEP   ║
+ * ║    de la fecha real de cada fila (mismo helper _getCCL que ya    ║
+ * ║    usa procesarMovimientos()).                                    ║
  * ║  CAMBIOS v3.38 (de una revisión independiente, ver README):   ║
  * ║  - Fix grave: con el token IOL vencido, el error se tragaba      ║
  * ║    por separado en cada función que pega contra la API y el     ║
@@ -1116,7 +1132,15 @@ function _leerIngresosEgresos() {
   const sheet = ss.getSheetByName(HOJAS.INGRESOS_EGRESOS);
   if (!sheet) return [];
 
-  const mep   = _getMEPActual();
+  // v3.39: antes se usaba _getMEPActual() (el MEP de HOY) para convertir
+  // CUALQUIER depósito/extracción en pesos, sin importar de qué fecha
+  // fuera — a pesar de que Portfolio dice "usando MEP histórico para
+  // convertir depósitos en ARS". Con el peso devaluándose con el tiempo,
+  // un depósito viejo convertido al MEP de hoy sale sistemáticamente más
+  // chico en dólares de lo que realmente fue, subestimando el total
+  // depositado e inflando el TIR. Ahora usa el MEP de la fecha real del
+  // depósito (mismo helper _getCCL que ya usa procesarMovimientos()).
+  const mepMap = _cargarCCL();
   const datos = sheet.getDataRange().getValues();
   const resultado = [];
 
@@ -1127,6 +1151,7 @@ function _leerIngresosEgresos() {
     const moneda  = String(fila[3] || '').trim().toUpperCase();
     if (!fecha || !monto) return;
 
+    const mep      = _getCCL(fecha, mepMap);
     const montoUSD = moneda === 'USD' ? monto : (mep > 0 ? monto / mep : 0);
     resultado.push({
       fecha,
@@ -3656,10 +3681,24 @@ function _escribirFlujosTIR(movs) {
       flujos.push({ fecha, total: -Math.abs(montoUSD), deposito: -Math.abs(montoUSD), rv: 0, rf: 0, rm: 0 });
       return;
     }
-    if (tipo === 'EXTRACCION' || tipo === 'CREDITO') {
+    if (tipo === 'EXTRACCION') {
       flujos.push({ fecha, total: Math.abs(montoUSD), deposito: Math.abs(montoUSD), rv: 0, rf: 0, rm: 0 });
       return;
     }
+    // v3.39: "Crédito" (movimiento de cuenta sin ticker) se trataba como
+    // un retiro real — pero son casi todos intereses chicos acreditados
+    // en la cuenta (quedan como efectivo, ya reflejados en la valuación
+    // final, igual que Pago de Renta/Dividendos). Confirmado con un caso
+    // concreto: un "Crédito" de USD 448,88 el 18/11 tenía un "Débito" de
+    // exactamente el mismo monto al día siguiente (19/11) — un movimiento
+    // interno que se revierte solo, no una plata que haya salido de la
+    // cuenta. El "Débito" ya caía en 'OTRO' (se excluye más abajo) porque
+    // el patrón de DEBITO solo reconoce "Débito - Producto", no un
+    // "Débito" pelado — pero el "Crédito" sí se contaba como retiro,
+    // metiendo un retiro fantasma que nunca pasó. Ahora "Crédito" se
+    // ignora acá, igual que "Débito"/"OTRO" (ver más abajo) — como
+    // cualquier otro ingreso que queda como efectivo en la cuenta.
+    if (tipo === 'CREDITO') return;
 
     // Flujos operativos por clase
     if (!ticker || montoUSD === null) return;

@@ -107,6 +107,42 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.39 — Fix TIR/Ganancia Total sobrestimadas (Crédito fantasma + MEP no histórico)
+
+Primer punto pendiente de v3.38, resuelto con un dato concreto en vez de
+una suposición. Se pidió el detalle del Crédito de USD 448,88 (18/11/25)
+para confirmarlo contra IOL — la captura de pantalla del broker mostró
+algo más claro todavía: un **Débito de exactamente el mismo monto al día
+siguiente (19/11/25)**. No es una transferencia externa ni un ingreso
+real — es un movimiento interno que se revierte solo, neto $0.
+
+Revisando el código con ese dato: el patrón que reconoce "Débito" exige
+el texto "Débito - Producto" — un "Débito" pelado (como este) no
+matchea nada y cae en la categoría genérica "OTRO", que ya se ignora
+correctamente. Pero el "Crédito" SÍ se reconoce, y `_escribirFlujosTIR()`
+lo sumaba como si fuera un **retiro real** (mismo trato que
+"Extracción"). Resultado: este par que se cancela solo metía un retiro
+fantasma de ~USD 449 que nunca pasó — y había más de 80 "Crédito" chicos
+más (probablemente intereses) sumando lo mismo, aunque sin el mismo peso.
+
+**Fix**: "Crédito" ahora se ignora para el cálculo de TIR/retiros, igual
+que "Débito"/"Otro" — mismo criterio que cualquier interés que queda
+como efectivo en la cuenta (como Pago de Renta/Dividendos, que tampoco
+suman como "retiro", porque ya quedan reflejados en la valuación final).
+
+**Segundo fix de la misma tanda**: `_leerIngresosEgresos()` convertía
+CUALQUIER depósito/extracción en pesos con el MEP de HOY, sin importar
+la fecha real de la fila — a pesar de que Portfolio dice literalmente
+"usando MEP histórico para convertir depósitos en ARS". Ahora usa el MEP
+de la fecha real de cada depósito (mismo helper `_getCCL` que ya usa
+`procesarMovimientos()` para todo lo demás).
+
+Con ambos fixes, "Total Retirado" en Portfolio debería bajar en
+~USD 449-598 y la TIR Anualizada acercarse a la estimación de Opus
+(~5,46% en vez de 7,20%) — quedan los demás pendientes de v3.38 por
+resolver (la regla general de moneda, comisiones ausentes, Radar, lock
+entre corridas).
+
 ## v3.38 — Revisión independiente (Opus): 3 fixes aplicados, varios pendientes de decisión
 
 A pedido explícito ("revisa con fable la planilla y el código y evalúalo"),
