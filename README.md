@@ -107,6 +107,77 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.40 — Regla general de moneda (reemplaza excepciones GD29/PBA25/BDC24)
+
+Siguiente punto pendiente de la revisión con Opus (v3.38), ahora pedido
+explícitamente: "Empecemos por la regla general de moneda".
+
+**El problema con el enfoque anterior**: desde v3.21/v3.23/v3.38,
+`procesarMovimientos()` tenía una lista fija de 3 tickers "excepción"
+(GD29, PBA25, BDC24) donde "Tipo Cuenta" de IOL no es confiable para saber
+la moneda real de la fila. Cada excepción se había confirmado con datos
+reales, pero era un parche por ticker — no escalaba (cualquier otro bono
+con el mismo problema se habría leído mal hasta encontrarlo a mano) y
+mezclaba dos reglas distintas bajo un solo campo ("Tipo Cuenta").
+
+**La regla general** (validada por Opus con los datos reales de Maki, y
+re-confirmada en esta vuelta contra los 2.256 movimientos con ticker de su
+planilla):
+- **Filas de ingreso** (Pago de Renta/Dividendos/Amortización): la moneda
+  es la del sufijo `" US$"` crudo que IOL pone en el propio texto de la
+  fila (ej. `"Pago de Renta(GD29 US$)"` = USD; `"Pago de Renta(PBA25)"`
+  sin sufijo = ARS). No importa en qué moneda se opera el título — un bono
+  puede operarse en dólares y pagar el cupón en pesos vía el agente de
+  pago local (o viceversa).
+- **Filas de operación** (Compra/Venta/Suscripción FCI/Rescate FCI/
+  Transferencias): la moneda es la `Moneda_Op` del ticker en la hoja
+  Equivalencias.
+- "Tipo Cuenta" deja de usarse para decidir la moneda de filas con ticker.
+  Sigue siendo el respaldo para movimientos de cuenta sin ticker
+  (Depósito/Extracción/Débito/Crédito/Otro), donde no aplica ninguna de
+  las dos reglas anteriores.
+
+**Cambios de código**:
+- `procesarMovimientos()`: se eliminó la lista `esARSExcepcion` (GD29/
+  PBA25/BDC24) y su comentario extenso; la moneda ahora sale de las dos
+  reglas de arriba.
+- `importarMovimientosIOL()`: al traer operaciones desde la API, el
+  sufijo `" US$"` que se sintetiza para Pago de Renta/Dividendos/
+  Amortización ahora usa solo el sufijo real que manda la API
+  (`esUSDSufijo`), no una inferencia desde Equivalencias — para Compra/
+  Venta/FCI/Transferencias sigue valiendo el cruce con Equivalencias,
+  porque esas filas nunca traen el sufijo " US$" en la API y muchos
+  CEDEARs USD (GOGLD, IBITD, METAD, ...) necesitan ese cruce para no
+  dividirse por el MEP de nuevo.
+- `poblarEquivalencias()`: la fila semilla de GD29 pasó de `Moneda_Op =
+  "USD"` a `"ARS"`, para quedar consistente con sus hermanos GD30/GD35/
+  GD38/GD41 (ninguno tiene contraparte "D" en dólares en esta cuenta).
+
+**⚠️ Acción manual pendiente para Maki**: la fila de GD29 ya existente en
+la hoja Equivalencias de su planilla real sigue diciendo `Moneda_Op =
+"USD"` (poblarEquivalencias() solo agrega tickers que faltan, nunca pisa
+una fila que ya existe). Hay que editarla a mano — cambiar esa celda a
+"ARS" — porque sin eso las Compras/Ventas de GD29 se clasificarían mal
+con la regla nueva (se confirmó exactamente este caso corriendo la
+validación de abajo contra su planilla real: con el valor viejo "USD" dan
+10 diferencias, todas Compra/Venta de GD29; con "ARS" dan 0).
+
+**Validación**: se descargó la planilla real de Maki y se corrió un
+script en Python que recalcula la moneda de cada una de las 2.256 filas
+con ticker en Movimientos con la regla vieja (exceptions hardcodeadas) y
+con la regla nueva, y compara. Con el fix de Equivalencias arriba
+aplicado: **0 diferencias** — la regla general reproduce exactamente el
+mismo resultado que las 3 excepciones puntuales, pero sin necesidad de
+mantener una lista de tickers a mano. 518 de las 2.256 filas tienen
+sufijo " US$" (ingresos en dólares), 1.738 no.
+
+**Sin verificar todavía**: esta validación corrió solo contra los datos
+de Maki. No se confirmó contra las planillas de Frank, Trini o Jose —
+si alguno de ellos tiene un bono/ON con el mismo patrón de "Tipo Cuenta"
+poco confiable que no sea GD29/PBA25/BDC24, la regla general debería
+cubrirlo igual (es justamente lo que la regla vieja no podía hacer), pero
+vale la pena confirmarlo con sus datos reales antes de darlo por cerrado.
+
 ## v3.39 — Fix TIR/Ganancia Total sobrestimadas (Crédito fantasma + MEP no histórico)
 
 Primer punto pendiente de v3.38, resuelto con un dato concreto en vez de

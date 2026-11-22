@@ -1,8 +1,28 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.39                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.40                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.40 (regla general de moneda, reemplaza excepciones ║
+ * ║  puntuales de GD29/PBA25/BDC24):                                ║
+ * ║  - IMPORTANTE: revisar manualmente la fila GD29 en Equivalencias║
+ * ║    y cambiar Moneda_Op de "USD" a "ARS" (como sus hermanos      ║
+ * ║    GD30/GD35/GD38/GD41) — sin este cambio en la planilla, las   ║
+ * ║    Compras/Ventas de GD29 se leerían mal con la regla nueva.    ║
+ * ║  - procesarMovimientos(): en vez de una lista fija de tickers   ║
+ * ║    "excepción", ahora toda fila de ingreso (Renta/Dividendos/   ║
+ * ║    Amortización) usa la moneda del sufijo " US$" crudo de la    ║
+ * ║    fila, y toda fila de operación (Compra/Venta/FCI/Transfer.)  ║
+ * ║    usa la Moneda_Op del ticker en Equivalencias — "Tipo Cuenta" ║
+ * ║    deja de usarse salvo como respaldo para movimientos sin      ║
+ * ║    ticker (Depósito/Extracción/Débito/Crédito/Otro).            ║
+ * ║  - importarMovimientosIOL(): mismo criterio al sintetizar el    ║
+ * ║    sufijo "US$" para Pago de Renta/Dividendos/Amortización —    ║
+ * ║    ahora usa solo el sufijo real de la API, no Equivalencias.   ║
+ * ║  - Validado contra los 2.256 movimientos con ticker de la       ║
+ * ║    planilla real de Maki: 0 diferencias contra el comportamiento║
+ * ║    anterior (una vez corregido GD29 en Equivalencias). No        ║
+ * ║    verificado todavía contra las planillas de Frank/Trini/Jose. ║
  * ║  CAMBIOS v3.39 (fix TIR/Ganancia Total sobrestimadas):         ║
  * ║  - "Crédito" ya no se cuenta como retiro real. Confirmado con  ║
  * ║    un caso concreto (comprobante de IOL): un Crédito de         ║
@@ -939,17 +959,21 @@ datos.slice(1).forEach(fila => {
     const simbolo      = String(op.simbolo || '').trim();
     const esUSDSufijo   = simbolo.endsWith(' US$');
     const ticker        = simbolo.replace(/ US\$$/, '').trim();
-    // El sufijo " US$" solo aparece en Pago de Renta/Dividendos. Muchos
-    // CEDEARs tienen su propia versión USD con el ticker terminado en D
-    // (GOGLD, IBITD, METAD, ...) y ahí NO hay sufijo — sin este cruce
-    // contra Equivalencias, una Compra/Venta de esos quedaba marcada
-    // "Inversion Argentina Pesos" y el precio (que ya estaba en USD)
-    // terminaba dividido por el MEP de nuevo, dando un precio absurdo.
-    const esUSD = esUSDSufijo || (eqMap[ticker] && eqMap[ticker].moneda === 'USD');
+    const tipo  = String(op.tipo || '').trim();
+    const esIngreso = tipo === 'Pago de Renta' || tipo === 'Pago de Dividendos' || tipo === 'Pago de Amortización';
+    // v3.40: regla general de moneda (ver mismo cambio en procesarMovimientos()).
+    // En ingresos (Renta/Dividendos/Amortización) la moneda es la del
+    // sufijo " US$" crudo de la API — un ticker puede operarse en dólares
+    // y pagar el cupón en pesos vía agente de pago local, o viceversa
+    // (GD29/PBA25/BDC24), así que NO se infiere de Equivalencias acá.
+    // En Compra/Venta/FCI/Transferencias el sufijo " US$" no aparece en
+    // la API — ahí sigue valiendo el cruce contra Equivalencias: muchos
+    // CEDEARs USD (GOGLD, IBITD, METAD, ...) no traen el sufijo y sin
+    // este cruce su precio (ya en USD) se volvía a dividir por el MEP.
+    const esUSD = esIngreso ? esUSDSufijo : (esUSDSufijo || (eqMap[ticker] && eqMap[ticker].moneda === 'USD'));
 
     // Construir tipo en formato que ya parsea _parseTipo
     let tipoMov = '';
-    const tipo  = String(op.tipo || '').trim();
     if (['Compra', 'Venta'].includes(tipo)) {
       tipoMov = `${tipo}(${ticker})`;
     } else if (tipo === 'Pago de Renta') {
@@ -1999,50 +2023,29 @@ for (let i = 0; i < Math.min(raw.length, 10); i++) {
     const precio    = _num(filaMain[C.precio]);
     const monto     = montoTotal;
     const cuentaTxt = String(filaMain[C.cuenta] || '');
-    // Tipo Cuenta = "Dolares" normalmente indica que Precio/Monto ya están
-    // en USD, pero no siempre es confiable — hay tickers puntuales donde
-    // IOL etiqueta la fila "Dolares" y sin embargo el valor está en PESOS.
-    // Cada excepción de esta tabla está confirmada con datos reales (ver
-    // README v3.21/v3.23), no es una regla general: NO extrapolar a otros
-    // tickers sin la misma verificación.
-    //   - GD29: no tiene contraparte "GD29D" en esta cuenta — TODAS sus
-    //     filas (compra/venta/renta) vienen en pesos. Confirmado
-    //     reconstruyendo el % de la par implícito con el MEP histórico.
-    //   - PBA25: las compras/ventas SÍ están en USD (Precio ~84-101,
-    //     rango normal de %-de-la-par en dólares) — Confirmado por Maki
-    //     contra IOL — pero los "Pago de Renta" vienen en pesos aunque la
-    //     fila diga "Dolares". Sin este fix, esos 7 pagos se leían como
-    //     9,4%..32,1% de la tenencia nominal (imposible para un cupón);
-    //     convertidos por MEP dan 0,03%-0,06% consistente entre todos.
-    //   - BDC24: mismo mecanismo que PBA25 (compras/ventas en USD,
-    //     confirmadas — Precio 98,9-101, coherente con dólares — pero los
-    //     "Pago de Renta" en pesos etiquetados "Dolares"). No confirmado
-    //     por Maki contra IOL como PBA25, pero misma firma exacta: leídos
-    //     como USD daban 12-26% de la tenencia por pago (imposible),
-    //     convertidos por MEP dan 0,03%-0,05% — igual que PBA25 y
-    //     consistente con que otros ONs de esta cuenta que SÍ cotizan y
-    //     liquidan en pesos (BDC28, TO23) ya traen su "Pago de Renta"
-    //     correctamente etiquetado "Pesos" — el bono paga el cupón en
-    //     pesos vía el agente de pago local aunque el título se opere en
-    //     dólares. Si aparece otro caso así, usar "🔍 Diagnóstico: Pagos
-    //     de Renta/Amortización Implausibles" para confirmarlo primero.
-    //
-    // v3.38: la excepción de GD29 estaba aplicando ARS a TODAS sus filas
-    // sin mirar si venían marcadas "US$" — pero GD29 SÍ tiene pagos de
-    // renta/amortización genuinamente en dólares (ej. "Pago de Renta
-    // (GD29 US$)" = 0,73, exactamente 0,5% de 146 nominales; "Pago de
-    // Amortización(GD29 US$)" = 14,6, exactamente 10% — montos sensatos
-    // como USD directo). La excepción los volvía a dividir por el MEP,
-    // aplastando ~USD 22,5 de ingresos reales a centavos
-    // (Historial mostraba Ingresos=0,04 para GD29 en vez de ~22,5).
-    // Ahora se respeta el sufijo " US$" de la fila cruda — el mismo
-    // sufijo que ya distingue "US$" de pesos en CUALQUIER otro ticker
-    // sin contraparte D (ver finding de la revisión con Opus, v3.38).
+    // v3.40: regla general de moneda (reemplaza las excepciones puntuales
+    // de GD29/PBA25/BDC24 de v3.21/v3.23/v3.38 — validada contra los datos
+    // reales de Maki en la revisión con Opus, v3.38/v3.39). "Tipo Cuenta"
+    // ("Dolares"/"Pesos") NO es confiable: hay tickers donde IOL etiqueta
+    // la fila "Dolares" y el valor real está en pesos (y viceversa). En su
+    // lugar:
+    //   - Filas de ingreso (Pago de Renta/Dividendos/Amortización): la
+    //     moneda es la del sufijo " US$" crudo de la fila (ej. "Pago de
+    //     Renta(GD29 US$)" = USD; "Pago de Renta(PBA25)" sin sufijo =
+    //     ARS), sin mirar Tipo Cuenta ni la moneda de Equivalencias — un
+    //     mismo ticker puede pagar cupón en pesos (vía agente de pago
+    //     local) aunque el título se opere en dólares.
+    //   - Filas de operación (Compra/Venta/Suscripción/Rescate FCI/
+    //     Transferencias): la moneda es Moneda_Op del ticker en
+    //     Equivalencias, sin mirar Tipo Cuenta.
+    // Si aparece un caso que no calce, usar "🔍 Diagnóstico: Pagos de
+    // Renta/Amortización Implausibles" para confirmarlo antes de tocar esto.
     const esUSDSufijoFila = / US\$\)\s*$/.test(tipoRaw);
-    const esARSExcepcion =
-      (ticker === 'GD29' && !esUSDSufijoFila) ||
-      (['PBA25', 'BDC24'].includes(ticker) && (tipo === 'RENTA' || tipo === 'DIVIDENDO' || tipo === 'AMORTIZACION'));
-    const esUSD     = !esARSExcepcion && (cuentaTxt.includes('Dolares') || cuentaTxt.includes('Dólares'));
+    const esFilaIngreso = tipo === 'RENTA' || tipo === 'DIVIDENDO' || tipo === 'AMORTIZACION';
+    const eqTicker  = ticker ? (eqMap[ticker] || null) : null;
+    const esUSD     = esFilaIngreso
+      ? esUSDSufijoFila
+      : (eqTicker ? eqTicker.moneda === 'USD' : (cuentaTxt.includes('Dolares') || cuentaTxt.includes('Dólares')));
     const mep       = _getCCL(fecha, mepMap);
 
     let montoUSD = null;
@@ -3938,7 +3941,7 @@ function poblarEquivalencias() {
     ['EWZD','EWZ','EWZ','iShares MSCI Brazil (USD)','USD','Renta Variable','ETF','','NYSE'],
     ['F','F','F','Ford Motor Company','ARS','Renta Variable','CEDEAR','','NYSE'],
     ['FD','F','F','Ford Motor Company (USD)','USD','Renta Variable','CEDEAR','','NYSE'],
-    ['GD29','GD29','','Global 2029','USD','Renta Fija','Bono','Tesoro Nacional',''],
+    ['GD29','GD29','','Global 2029','ARS','Renta Fija','Bono','Tesoro Nacional',''],
     ['GD30','GD30','','Global 2030 (Ley Local)','ARS','Renta Fija','Bono','Tesoro Nacional',''],
     ['GD35','GD35','','Global 2035 (Ley Local)','ARS','Renta Fija','Bono','Tesoro Nacional',''],
     ['GD38','GD38','','Global 2038','ARS','Renta Fija','Bono','Tesoro Nacional',''],
