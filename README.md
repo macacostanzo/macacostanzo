@@ -107,6 +107,33 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.45 — Benchmark contra S&P 500 en Portfolio
+
+A pedido ("comparación contra benchmark... ¿dónde lo pondrías?" → "sí").
+Nueva sección "BENCHMARK" en Portfolio, justo debajo de "TIR DEL
+PORTFOLIO": rendimiento anualizado del S&P 500 (SPY, vía
+`GOOGLEFINANCE`) desde la fecha de tu primer flujo de capital, con un
+semáforo que dice si le ganás o no a tu propia TIR Anualizada.
+
+**Importante — no es money-weighted.** La TIR de arriba pondera cada
+depósito por su fecha real (si depositaste 70% del dinero hace 3 meses,
+pesa distinto que si lo depositaste hace 3 años). El benchmark del
+S&P 500 es un CAGR simple: `(precio hoy / precio en tu primer flujo) ^
+(365/días) - 1` — como si hubieras puesto TODO el dinero de una sola vez
+el día de tu primer depósito. Si depositaste de forma escalonada en el
+tiempo, los dos números no son directamente comparables uno a uno —
+por eso queda en su propia sección con la aclaración explícita en la
+planilla, no mezclado con la TIR de arriba. Sirve como referencia
+aproximada ("¿me convenía estar afuera del mercado?"), no como
+comparación exacta.
+
+No se agregó devaluación del CCL como segundo benchmark: necesitaría el
+tipo de cambio exacto en la fecha del primer flujo, y la hoja CCL solo
+tiene datos desde que se empezó a usar el script — para fechas de
+depósito anteriores a eso, la comparación daría error o un dato
+incompleto. Se dejó solo el S&P 500, que sí tiene historial completo
+vía GOOGLEFINANCE.
+
 ## v3.44 — Sacado Precio Teórico/Prima vs. NYSE (a pedido: "ni la prima etc")
 
 Feedback directo de uso: "las comparaciones contra precio teórico no me

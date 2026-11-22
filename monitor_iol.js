@@ -1,8 +1,15 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.44                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.45                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.45 (benchmark contra S&P 500 en Portfolio):        ║
+ * ║  - Nueva sección "BENCHMARK" en Portfolio, debajo de la TIR     ║
+ * ║    del Portfolio: rendimiento anualizado del S&P 500 (SPY)      ║
+ * ║    desde tu primer flujo de capital, con un semáforo vs. tu TIR.║
+ * ║    Aclarado que NO es money-weighted (no pondera por fecha de    ║
+ * ║    cada depósito como la TIR sí) — referencia aproximada, no    ║
+ * ║    comparación número contra número.                            ║
  * ║  CAMBIOS v3.44 (sacado Precio Teórico/Prima vs. NYSE):          ║
  * ║  - Un CEDEAR se arbitra todo el tiempo contra su subyacente,    ║
  * ║    así que la Prima/Desc % contra el precio teórico (cols Q/R/S ║
@@ -3269,6 +3276,39 @@ function _escribirPortfolio(abiertas, cerradas, config) {
     `=IFERROR(XIRR(${rangoFlujos('B')};${rangoFlujos('A')});"Sin datos suficientes")`,
     '0.00%');
   sheet.getRange(f, 1, 1, 2).setFontWeight('bold').setFontSize(13);
+  const filaTirPortfolio = f;
+
+  // ── Benchmark ─────────────────────────────────────────────────────────
+  // v3.45: a pedido ("comparación contra benchmark... dónde lo pondrías").
+  // No es money-weighted como la TIR de arriba (cada depósito tuyo entró
+  // en una fecha distinta, esto es un CAGR simple desde el primer flujo)
+  // — por eso queda en una sección separada, como referencia aproximada,
+  // no como un número directamente comparable al de arriba.
+  f++; f++;
+  escribirTitulo(f, '  BENCHMARK (referencia aproximada, no money-weighted)');
+
+  f++; sheet.getRange(f, 1, 1, 2).merge().setValue(
+    '→ Rendimiento simple desde tu primer flujo de capital, NO ponderado ' +
+    'por fecha de cada depósito como la TIR de arriba — sirve para saber ' +
+    'si te convenía estar afuera del mercado, no para comparar número ' +
+    'contra número.'
+  ).setFontColor('#666666').setFontStyle('italic').setWrap(true);
+  sheet.setRowHeight(f, 50);
+
+  f++; escribirFila(f, 'Desde (primer flujo de capital)',
+    `=IFERROR(MIN(${rangoFlujos('A')});"")`, 'dd/mm/yyyy');
+  const filaFechaMin = f;
+
+  f++; escribirFila(f, 'S&P 500 (SPY) anualizado desde esa fecha',
+    `=IFERROR((GOOGLEFINANCE("SPY")/INDEX(GOOGLEFINANCE("SPY";"price";B${filaFechaMin});2;2))^(365/(TODAY()-B${filaFechaMin}))-1;"Sin datos")`,
+    '0.00%');
+  const filaBenchSPY = f;
+
+  f++; sheet.getRange(f, 1).setValue('  → vs. tu TIR Anualizada');
+  sheet.getRange(f, 3).setFormula(
+    `=IFERROR(IF(OR(ISTEXT(B${filaTirPortfolio});ISTEXT(B${filaBenchSPY}));"⚪";IF(B${filaTirPortfolio}>=B${filaBenchSPY};"✅ Le ganás al S&P 500";"🔴 Te gana el S&P 500"));"⚪")`
+  );
+  sheet.getRange(f, 3).setFontWeight('bold');
 
 // ── Distribución ──────────────────────────────────────────────────────
   f++; f++;
