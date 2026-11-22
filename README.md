@@ -107,6 +107,31 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.47 — Regresión de v3.44 encontrada al auditar ("¿algo más que encuentres?")
+
+Pidió una pasada de "qué más encontrás" después de cerrar el benchmark.
+Antes de buscar algo nuevo, se auditaron las referencias sueltas a
+"precio teórico" que quedaron después de sacarlo en v3.44, por si algo
+se escapó — y sí: **`_candidatosRV()`** (la función que agrega
+"→ AAPL, MSFT" a la Acción Sugerida de la sección "Desbalanceo vs.
+Política de Inversión" del Radar, cuando toca comprar o vender Renta
+Variable) seguía leyendo la columna S de Posiciones (Prima/Desc % vs.
+teórico), que v3.44 dejó vacía al sacar esa comparación.
+
+Con la columna vacía, `parseFloat()` daba `NaN` para todas las filas,
+el `continue` se disparaba siempre, y la función devolvía un array
+vacío sin ningún error visible — desde v3.44, "Comprar ≈ USD 500"
+aparecía solo, sin sugerir qué ticker comprar con esa plata. Arreglado
+usando el mismo criterio que ya usa "Sugerencia de Inversión" (distancia
+a tu propio costo promedio). También se corrigió un mensaje de "sin
+candidatos" que todavía mencionaba "precio teórico" en vez de "Precio
+Prom y Precio Actual".
+
+Es el tipo de regresión que un cambio bien probado en un lugar puede
+dejar rota en otro que usa el mismo dato — vale la pena, después de
+sacar algo, grepear el nombre completo (no solo donde se tocó) antes de
+dar el cambio por cerrado.
+
 ## v3.46 — Benchmark S&P 500 money-weighted de verdad
 
 Feedback directo apenas se vio v3.45 en uso: "si voy ingresando dinero

@@ -1,8 +1,16 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.46                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.47                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.47 (regresión de v3.44 encontrada al auditar):      ║
+ * ║  - _candidatosRV() (sugiere tickers en "Acción Sugerida" de     ║
+ * ║    Desbalanceo, Radar sección 1) seguía leyendo la columna S    ║
+ * ║    de Posiciones (Prima/Desc vs. teórico) que v3.44 dejó vacía  ║
+ * ║    al sacar esa comparación — devolvía [] en silencio desde      ║
+ * ║    entonces, así que "Comprar ≈ USD X" aparecía sin ningún       ║
+ * ║    ticker sugerido. Ahora usa el mismo criterio que ya usa       ║
+ * ║    Sugerencia de Inversión (distancia a tu costo promedio).      ║
  * ║  CAMBIOS v3.46 (benchmark S&P 500 money-weighted de verdad):   ║
  * ║  - v3.45 comparaba contra un CAGR simple desde el primer        ║
  * ║    depósito — inútil si depositás mes a mes (feedback directo). ║
@@ -4745,20 +4753,29 @@ function generarRadar() {
   const posSheet = ss.getSheetByName(HOJAS.POSICIONES);
   const posData  = posSheet ? posSheet.getDataRange().getValues() : [];
 
-  // Candidatos de Renta Variable para sugerir en el rebalanceo, según
-  // qué tan cara/barata está cada tenencia vs su precio teórico (col S, índice 18).
+  // Candidatos de Renta Variable para sugerir en el rebalanceo, según qué
+  // tan por debajo/arriba de tu propio costo promedio está cada tenencia.
+  // v3.47: esto todavía leía la columna S de Posiciones (Prima/Desc vs.
+  // precio teórico), que v3.44 dejó vacía al sacar esa comparación — con
+  // la columna vacía, `isNaN(prima)` daba true SIEMPRE y esta función
+  // devolvía `[]` en silencio, así que la "Acción Sugerida" de Renta
+  // Variable (sección 1 del Radar) venía mostrando el monto a comprar/
+  // vender sin ningún ticker sugerido desde v3.44. Reencontrado al
+  // revisar referencias sueltas a "precio teórico" después de sacarlo.
   function _candidatosRV(direccion) {
     const candidatos = [];
     for (let i = 1; i < posData.length; i++) {
       const clase = String(posData[i][23] || '');
       if (clase !== 'Renta Variable') continue;
-      const ticker = String(posData[i][0] || '').trim();
-      const prima  = parseFloat(posData[i][18]);
-      if (!ticker || isNaN(prima)) continue;
-      candidatos.push({ ticker, prima });
+      const ticker     = String(posData[i][0] || '').trim();
+      const precioProm = parseFloat(posData[i][3]) || 0;
+      const precioUSD  = parseFloat(posData[i][4]) || 0;
+      if (!ticker || !precioProm || !precioUSD) continue;
+      const distancia = (precioUSD - precioProm) / precioProm;
+      candidatos.push({ ticker, distancia });
     }
-    candidatos.sort((a, b) => direccion === 'comprar' ? a.prima - b.prima : b.prima - a.prima);
-    return candidatos.slice(0, 2).map(c => `${c.ticker} (${(c.prima * 100).toFixed(1)}%)`);
+    candidatos.sort((a, b) => direccion === 'comprar' ? a.distancia - b.distancia : b.distancia - a.distancia);
+    return candidatos.slice(0, 2).map(c => `${c.ticker} (${(c.distancia * 100).toFixed(1)}%)`);
   }
 
   // ════════════════════════════════════════════════════════════
@@ -4964,7 +4981,7 @@ function generarRadar() {
     if (todas.length === 0) {
       fila(f, [
         'Sin candidatos entre tus posiciones actuales con los datos disponibles ' +
-        '(revisá si tenés precio teórico calculado en Renta Variable, o TIR en Renta Fija).',
+        '(revisá si tenés Precio Prom y Precio Actual en Renta Variable, o TIR en Renta Fija).',
         '', '', ''
       ], C.GRIS);
       f++;
