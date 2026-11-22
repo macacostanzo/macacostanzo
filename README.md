@@ -107,6 +107,40 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.49 — Fix: el benchmark SPY daba números sin sentido (-63,54%)
+
+Reportado apenas se vio v3.48 en uso: "está raro que la TIR anualizada
+del S&P hubiese sido -63,54%". Tenía toda la razón — bajé la planilla
+real y encontré la causa en las columnas ocultas de Flujos_TIR: varios
+depósitos tenían la columna H (precio histórico de SPY) vacía.
+
+**Causa real**: v3.48 agregó la fila "Ref. S&P 500" y sus columnas
+ocultas (M-O) para **TODOS** los tickers de Renta Variable con posición
+abierta, no solo los que terminan mostrándose en "Costo de Oportunidad"
+— en una cuenta de varios años, eso son decenas de tickers con varios
+lotes cada uno, cada lote pidiendo su propia cotización histórica a
+`GOOGLEFINANCE`. Sumado a los ~12-15 pedidos que ya hacía el benchmark
+de Portfolio (v3.46) en la misma hoja, el total de pedidos simultáneos
+superó lo que GOOGLEFINANCE puede resolver de una — algunos fallaron en
+silencio (quedaron en blanco), y esos agujeros corrompieron el XIRR
+simulado sin ningún aviso.
+
+**Fix de fondo**: el benchmark por ticker ahora solo se calcula para los
+tickers que **Radar va a mostrar de verdad** (los mismos candidatos de
+"Costo de Oportunidad vs. S&P 500" — más de 6 meses, G/P peor que -15%),
+usando una constante compartida (`BENCHMARK_RV`) para que el criterio
+sea exactamente el mismo en los dos lados. Esto solo, en la mayoría de
+las cuentas, baja la cantidad de pedidos de "decenas de tickers" a
+"un puñado" — la causa de fondo del problema.
+
+**Red de seguridad agregada**: además, tanto el benchmark de Portfolio
+como el de cada ticker ahora chequean (`COUNTIFS`) si a algún depósito/
+compra le faltó la cotización histórica antes de calcular el XIRR — si
+falta alguna, muestran **"Sin datos (falta cotización histórica)"** en
+vez de un número corrupto como el -63,54% de antes. Si llegás a ver ese
+mensaje, probablemente alcance con correr "Actualizar Todo" de nuevo
+(GOOGLEFINANCE a veces falla una vez y después responde bien).
+
 ## v3.48 — Costo de oportunidad vs. S&P 500, por ticker y por lote real
 
 Objeción directa a la propuesta anterior (flag genérico "revisar

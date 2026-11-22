@@ -1,8 +1,22 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.48                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.49                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.49 (fix: benchmark SPY daba números sin sentido):  ║
+ * ║  - Reportado un -63,54% de "TIR si hubiera sido S&P 500" —      ║
+ * ║    v3.48 pedía una cotización histórica a GOOGLEFINANCE por     ║
+ * ║    cada Compra/Venta de CADA ticker de Renta Variable (no solo  ║
+ * ║    los candidatos que Radar termina mostrando) — con una cuenta ║
+ * ║    de varios años, demasiados pedidos a la vez, y algunos        ║
+ * ║    fallaban en silencio, agujereando el XIRR simulado. Ahora el ║
+ * ║    benchmark por ticker (Detalle_Compras) solo se calcula para   ║
+ * ║    los tickers que Radar va a mostrar de verdad — mismo criterio ║
+ * ║    de los dos lados (constante BENCHMARK_RV).                    ║
+ * ║  - Además, tanto el benchmark de Portfolio como el de cada       ║
+ * ║    ticker ahora chequean si falta alguna cotización histórica    ║
+ * ║    antes de calcular el XIRR — si falta, muestran "Sin datos     ║
+ * ║    (falta cotización histórica)" en vez de un número corrupto.   ║
  * ║  CAMBIOS v3.48 (costo de oportunidad vs. S&P 500 por ticker):  ║
  * ║  - Nueva sección en Radar: "Costo de Oportunidad vs. S&P 500"   ║
  * ║    — para Renta Variable con más de 6 meses y G/P No Realizado  ║
@@ -566,6 +580,16 @@ const HOJAS = {
 };
 
 const IOL_BASE = 'https://api.invertironline.com';
+
+// Umbrales compartidos por _escribirDetalleCompras() (qué tickers reciben
+// la simulación de benchmark contra SPY, cada una pide varias cotizaciones
+// históricas a GOOGLEFINANCE) y generarRadar() (qué tickers se muestran en
+// "Costo de Oportunidad vs. S&P 500") — tienen que ser el MISMO criterio en
+// los dos lados, si no Radar busca un benchmark que nunca se calculó.
+const BENCHMARK_RV = {
+  UMBRAL_PERDIDA_SOSTENIDA: -0.15, // G/P No Realizado peor que esto
+  MESES_MINIMOS_SOSTENIDA:  6,     // y con más de esta antigüedad
+};
 
 // Umbrales de riesgo/rebalanceo — valores por DEFECTO, pensados para una
 // inversora largo placista. Cada planilla (Maki, Frank, Trini, ...) usa el
@@ -3319,8 +3343,13 @@ function _escribirPortfolio(abiertas, cerradas, config) {
   ).setFontColor('#666666').setFontStyle('italic').setWrap(true);
   sheet.setRowHeight(f, 40);
 
+  // v3.49: si a algún depósito/extracción le faltó la cotización
+  // histórica de SPY (Flujos_TIR!H vacía con C≠0), el XIRR de abajo
+  // quedaba corrupto en silencio en vez de avisar — ver nota en
+  // _escribirFlujosTIR(). Mismo chequeo acá, por las dudas.
   f++; escribirFila(f, 'TIR Anualizada si hubiera sido S&P 500 (XIRR)',
-    `=IFERROR(XIRR(${rangoFlujos('K')};${rangoFlujos('A')});"Sin datos suficientes")`,
+    `=IF(COUNTIFS(${rangoFlujos('C')};"<>0";${rangoFlujos('H')};"")>0;"Sin datos (falta cotización histórica)";` +
+    `IFERROR(XIRR(${rangoFlujos('K')};${rangoFlujos('A')});"Sin datos suficientes"))`,
     '0.00%');
   const filaBenchSPY = f;
 
@@ -3700,6 +3729,30 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
   // del todo no ayuda a decidir qué hacer ahora (para eso está Historial).
   const abiertosSet = new Set(abiertas.map(p => p.tickerBase));
 
+  // v3.49: la fila "Ref. S&P 500" y sus columnas ocultas (M-O) piden una
+  // cotización histórica a GOOGLEFINANCE por cada Compra/Venta — si se
+  // calculan para TODOS los tickers de Renta Variable (como hacía v3.48),
+  // la cantidad de pedidos simultáneos se dispara con cuentas de varios
+  // años (decenas de tickers × varios lotes cada uno) y GOOGLEFINANCE
+  // empieza a fallar en silencio para algunos de ellos — dejando huecos
+  // que corrompen el XIRR simulado (confirmado: así salió una "TIR si
+  // hubiera sido SPY" de -63% sin sentido, con varias fechas de depósito
+  // sin cotización histórica). Ahora el benchmark solo se calcula para
+  // los tickers que Radar va a mostrar de verdad — mismo criterio que
+  // "Costo de Oportunidad vs. S&P 500" (ver BENCHMARK_RV), acotando la
+  // cantidad de pedidos a lo que realmente hace falta.
+  const tickersCandidatosBenchmark = new Set();
+  abiertas.forEach(pos => {
+    if (pos.clase !== 'Renta Variable' || !pos.primeraCompra || !pos.costoActual) return;
+    const precioActual = (preciosIOL[pos.tickerBase] || {}).precioUSD || 0;
+    if (!precioActual) return;
+    const gpPct = (pos.cantActual * precioActual - pos.costoActual) / pos.costoActual;
+    if (gpPct > BENCHMARK_RV.UMBRAL_PERDIDA_SOSTENIDA) return;
+    const meses = (new Date() - new Date(pos.primeraCompra)) / (1000 * 60 * 60 * 24 * 30.44);
+    if (meses < BENCHMARK_RV.MESES_MINIMOS_SOSTENIDA) return;
+    tickersCandidatosBenchmark.add(pos.tickerBase);
+  });
+
   // Splits detectados (misma lógica que Reentrada) — para ajustar el
   // precio de cada operación al equivalente post-split, y para no listar
   // la "Transferencia de Titulos IN" que en realidad es un split como si
@@ -3817,7 +3870,7 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
       idx++;
     }
     const filaFinLotesSheet = filasFinal.length + 1;
-    if (clase === 'Renta Variable') {
+    if (clase === 'Renta Variable' && tickersCandidatosBenchmark.has(ticker)) {
       filasFinal.push([ticker, 'Ref. S&P 500', clase, new Date(), '', '', '', '', '', '', '', '']);
       bloquesBenchmark.push({ ticker, filaInicioSheet, filaFinLotesSheet, filaBenchmarkSheet: filasFinal.length + 1 });
     }
@@ -3838,7 +3891,8 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
   const formulasM = [], formulasN = [], formulasO = [];
   filasFinal.forEach((f, i) => {
     const r = i + 2;
-    if (f[1] === 'Compra' || f[1] === 'Venta') {
+    const esLoteDeCandidato = (f[1] === 'Compra' || f[1] === 'Venta') && tickersCandidatosBenchmark.has(f[0]);
+    if (esLoteDeCandidato) {
       formulasM.push([`=IFERROR(INDEX(GOOGLEFINANCE("SPY";"price";D${r});2;2);"")`]);
       formulasN.push([`=IF(B${r}="Compra";-I${r};IF(B${r}="Venta";I${r};""))`]);
       formulasO.push([`=IF(AND(M${r}<>"";N${r}<>"");-N${r}/M${r};"")`]);
@@ -3856,13 +3910,22 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
   // acciones SPY simuladas de todo el bloque; col P = clave para que
   // Radar la encuentre con VLOOKUP; col Q = TIR si hubiera sido SPY,
   // con el mismo método (XIRR) que la TIR real de Posiciones.
+  // v3.49: si a algún lote le faltó la cotización histórica (col M vacía
+  // — puede pasar si GOOGLEFINANCE no tiene ese día, o si está fallando
+  // por demasiados pedidos a la vez), el XIRR queda corrupto en
+  // silencio con el agujero de ese lote (fue la causa de un benchmark
+  // de -63% sin sentido) — ahora se cuenta con COUNTIF y, si falta
+  // alguno, se muestra "Sin datos (falta cotización histórica)" en vez
+  // de un número poco confiable.
   bloquesBenchmark.forEach(b => {
+    const rangoM = `M${b.filaInicioSheet}:M${b.filaFinLotesSheet}`;
     sheet.getRange(b.filaBenchmarkSheet, 14).setFormula(
-      `=IFERROR(SUM(O${b.filaInicioSheet}:O${b.filaFinLotesSheet})*GOOGLEFINANCE("SPY");"")`
+      `=IFERROR(IF(COUNTIF(${rangoM};"")>0;"";SUM(O${b.filaInicioSheet}:O${b.filaFinLotesSheet})*GOOGLEFINANCE("SPY"));"")`
     );
     sheet.getRange(b.filaBenchmarkSheet, 16).setValue(`${b.ticker}|BENCH`);
     sheet.getRange(b.filaBenchmarkSheet, 17).setFormula(
-      `=IFERROR(XIRR(N${b.filaInicioSheet}:N${b.filaBenchmarkSheet};D${b.filaInicioSheet}:D${b.filaBenchmarkSheet});"Sin datos")`
+      `=IF(COUNTIF(${rangoM};"")>0;"Sin datos (falta cotización histórica)";` +
+      `IFERROR(XIRR(N${b.filaInicioSheet}:N${b.filaBenchmarkSheet};D${b.filaInicioSheet}:D${b.filaBenchmarkSheet});"Sin datos"))`
     );
   });
   sheet.getRange(2, 17, nRows, 1).setNumberFormat('0.00%');
@@ -4018,8 +4081,18 @@ function _escribirFlujosTIR(movs) {
   // Col K en esta fila: valor que tendrían hoy las acciones de SPY
   // "compradas" con cada depósito/extracción real (ver col I) — el
   // equivalente del total de col B, pero para el benchmark.
+  // v3.49: si a algún depósito/extracción le faltó la cotización
+  // histórica (col H vacía con C≠0 — puede pasar si GOOGLEFINANCE no
+  // tiene ese día, o si está fallando por demasiados pedidos a la vez),
+  // el XIRR de Portfolio quedaba corrupto en silencio con el agujero de
+  // ese depósito (así salió un benchmark de -63% sin sentido). Ahora se
+  // cuenta con COUNTIFS y, si falta alguno, queda en blanco — Portfolio
+  // ya muestra "Sin datos suficientes" cuando XIRR no tiene con qué.
+  const rangoCestaFila   = `C2:C${rows.length + 1}`;
+  const rangoHestaFila   = `H2:H${rows.length + 1}`;
   sheet.getRange(ultimaFila, 11).setFormula(
-    `=IFERROR(SUM(I2:I${rows.length + 1})*GOOGLEFINANCE("SPY");"")`
+    `=IF(COUNTIFS(${rangoCestaFila};"<>0";${rangoHestaFila};"")>0;"";` +
+    `IFERROR(SUM(I2:I${rows.length + 1})*GOOGLEFINANCE("SPY");""))`
   );
 }
 // ─────────────────────────────────────────────
@@ -5459,8 +5532,10 @@ function generarRadar() {
   subtit(f, 6);
   f++;
 
-  const UMBRAL_PERDIDA_SOSTENIDA = -0.15; // -15%
-  const MESES_MINIMOS_SOSTENIDA  = 6;
+  // v3.49: usa BENCHMARK_RV (constante compartida con
+  // _escribirDetalleCompras()) para que el criterio sea exactamente el
+  // mismo en los dos lados — si no, Radar podría buscar el benchmark de
+  // un ticker que nunca se calculó (o al revés).
   const candidatosOportunidad = [];
   for (let i = 1; i < posData.length; i++) {
     const clase = String(posData[i][23] || '');
@@ -5470,18 +5545,18 @@ function generarRadar() {
     const primeraCompra = posData[i][27];
     const costo          = parseFloat(posData[i][2]) || 0;
     const tirReal        = parseFloat(posData[i][12]);
-    if (!ticker || isNaN(gpPct) || gpPct > UMBRAL_PERDIDA_SOSTENIDA) continue;
+    if (!ticker || isNaN(gpPct) || gpPct > BENCHMARK_RV.UMBRAL_PERDIDA_SOSTENIDA) continue;
     if (!primeraCompra) continue;
     const meses = (new Date() - new Date(primeraCompra)) / (1000 * 60 * 60 * 24 * 30.44);
-    if (meses < MESES_MINIMOS_SOSTENIDA) continue;
+    if (meses < BENCHMARK_RV.MESES_MINIMOS_SOSTENIDA) continue;
     candidatosOportunidad.push({ ticker, gpPct, costo, tirReal, meses });
   }
   candidatosOportunidad.sort((a, b) => a.gpPct - b.gpPct);
 
   if (candidatosOportunidad.length === 0) {
     fila(f, [
-      `Sin posiciones en pérdida sostenida (más de ${MESES_MINIMOS_SOSTENIDA} meses, peor que ` +
-      `${(UMBRAL_PERDIDA_SOSTENIDA * 100).toFixed(0)}%) por ahora`,
+      `Sin posiciones en pérdida sostenida (más de ${BENCHMARK_RV.MESES_MINIMOS_SOSTENIDA} meses, peor que ` +
+      `${(BENCHMARK_RV.UMBRAL_PERDIDA_SOSTENIDA * 100).toFixed(0)}%) por ahora`,
       '', '', '', '', ''
     ], C.GRIS);
     f++;
