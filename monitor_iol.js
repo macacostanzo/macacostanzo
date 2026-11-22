@@ -1,8 +1,29 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.40                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.41                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.41 (3 fixes de Radar + lock entre corridas):       ║
+ * ║  - Arbitraje ARS/USD usaba la col S de Posiciones (prima del   ║
+ * ║    CEDEAR vs teórico NYSE) en vez de calcular la prima ARS/USD ║
+ * ║    del mismo ticker — por eso siempre salían las mismas ~27    ║
+ * ║    CEDEARs con el mismo numerito (un gap estructural, no un    ║
+ * ║    arbitraje real). Ahora se calcula directo de precioARS/MEP  ║
+ * ║    vs precioUSD, igual que la col T (Conviene Operar).         ║
+ * ║  - Alertas Renta Fija pedía la TIR a la cotización de IOL, que ║
+ * ║    no trae ese campo para ONs/Bonos — sección siempre vacía.   ║
+ * ║    Ahora reutiliza la TIR por posición que ya calcula          ║
+ * ║    Posiciones (col M), igual que ya hace Sugerencia de         ║
+ * ║    Inversión.                                                   ║
+ * ║  - Sugerencia de Inversión: si no tenías ninguna posición de   ║
+ * ║    Renta Mixta/FCI, el gap completo de esa clase se comía la   ║
+ * ║    mayor parte del presupuesto sin tener candidatos — quedaba  ║
+ * ║    "sin asignar" en vez de repartirse entre RV/RF. Ahora el    ║
+ * ║    presupuesto solo compite entre clases con candidatos reales.║
+ * ║  - LockService en _actualizarTodoCore(): si el botón del celu  ║
+ * ║    y el trigger diario corrían a la vez, podían duplicar filas ║
+ * ║    o pisarse en Historial. Ahora la segunda corrida espera o   ║
+ * ║    corta con un mensaje claro en vez de competir por las hojas.║
  * ║  CAMBIOS v3.40 (regla general de moneda, reemplaza excepciones ║
  * ║  puntuales de GD29/PBA25/BDC24):                                ║
  * ║  - IMPORTANTE: revisar manualmente la fila GD29 en Equivalencias║
@@ -1336,6 +1357,27 @@ function _obtenerPreciosIOL() {
 function _actualizarTodoCore() {
   const resultado = { nuevos: 0, saldoInfo: '', error: null };
 
+  // v3.41: sin lock, el botón del celu y el trigger diario podían correr
+  // al mismo tiempo y pisarse entre sí — importarMovimientosIOL() no es
+  // atómico (lee movimientos existentes, pega los nuevos en otra
+  // llamada), así que dos corridas superpuestas podían duplicar filas en
+  // Movimientos o dejar Historial/Posiciones a medio escribir. Con
+  // LockService, si ya hay una actualización en curso, la segunda se
+  // corta acá en vez de competir por las mismas hojas.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    resultado.error = 'Ya hay otra actualización en curso (botón del celu o el trigger diario) — esperá un minuto y probá de nuevo.';
+    return resultado;
+  }
+
+  try {
+    return _actualizarTodoSinLock(resultado);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _actualizarTodoSinLock(resultado) {
   // v3.38: antes, cuando el token estaba vencido, el error se tragaba por
   // separado en cada función que pega contra la API (_obtenerPreciosIOL,
   // _fetchIOLBatch) y el script seguía de largo calculando con precios en
@@ -4744,18 +4786,32 @@ function generarRadar() {
 
     // Presupuesto por clase: prioriza la(s) clase(s) más lejos de su
     // target; si ninguna está por debajo, reparte según los pesos target.
-    const gapRV = Math.max(0, config.targetRV - pctRV);
-    const gapRF = Math.max(0, config.targetRF - pctRF);
-    const gapRM = Math.max(0, config.targetRM - pctRM);
-    const gapTotal = gapRV + gapRF + gapRM;
+    // v3.41: antes el gap se calculaba sobre las 3 clases sin mirar si
+    // había candidatos reales — si no tenías ninguna posición de Renta
+    // Mixta/FCI, pctRM=0 y el gap de esa clase (su target completo) se
+    // comía la mayor parte del presupuesto para una lista de candidatos
+    // vacía (_repartir no propone tickers nuevos a propósito), y esa
+    // porción quedaba "sin asignar" en vez de repartirse entre RV/RF que
+    // sí tenían dónde sugerir. Ahora el gap de una clase sin candidatos
+    // no entra en el reparto — solo compiten las clases que tienen al
+    // menos un candidato.
+    const clasesPresupuesto = [
+      { candidatos: candRV, gap: Math.max(0, config.targetRV - pctRV), target: config.targetRV },
+      { candidatos: candRF, gap: Math.max(0, config.targetRF - pctRF), target: config.targetRF },
+      { candidatos: candRM, gap: Math.max(0, config.targetRM - pctRM), target: config.targetRM },
+    ];
+    const conCandidatos   = clasesPresupuesto.filter(c => c.candidatos.length > 0);
+    const gapTotalDisp    = conCandidatos.reduce((s, c) => s + c.gap, 0);
+    const targetTotalDisp = conCandidatos.reduce((s, c) => s + c.target, 0);
+    conCandidatos.forEach(c => {
+      c.peso = gapTotalDisp > 0.001 ? c.gap / gapTotalDisp
+             : (targetTotalDisp > 0 ? c.target / targetTotalDisp : 1 / conCandidatos.length);
+    });
+    const [pRV, pRF, pRM] = clasesPresupuesto.map(c => c.peso || 0);
 
-    const pesoRV = gapTotal > 0.001 ? gapRV / gapTotal : config.targetRV;
-    const pesoRF = gapTotal > 0.001 ? gapRF / gapTotal : config.targetRF;
-    const pesoRM = gapTotal > 0.001 ? gapRM / gapTotal : config.targetRM;
-
-    const { sugerencias: sugRV } = _repartir(candRV, totalDisponible * pesoRV);
-    const { sugerencias: sugRF } = _repartir(candRF, totalDisponible * pesoRF);
-    const { sugerencias: sugRM } = _repartir(candRM, totalDisponible * pesoRM);
+    const { sugerencias: sugRV } = _repartir(candRV, totalDisponible * pRV);
+    const { sugerencias: sugRF } = _repartir(candRF, totalDisponible * pRF);
+    const { sugerencias: sugRM } = _repartir(candRM, totalDisponible * pRM);
 
     const todas = [...sugRV, ...sugRF, ...sugRM];
     if (todas.length === 0) {
@@ -5026,7 +5082,7 @@ function generarRadar() {
   subtit(f, 5);
   f++;
 
-  // Cols: A=ticker, E=precioUSD, F=precioARS, S=prima/desc%, T=conviene, X=clase
+  // Cols: A=ticker, E=precioUSD, F=precioARS, T=conviene, X=clase
   const arbitrajes = [];
   const mepActual  = _getMEPActual();
 
@@ -5035,17 +5091,28 @@ function generarRadar() {
     if (!ticker || ticker === 'LIQUIDEZ') continue;
     const precioUSD  = parseFloat(posData[i][4]) || 0;
     const precioARS  = parseFloat(posData[i][5]) || 0;
-    const primaDesc  = parseFloat(posData[i][18]) || 0; // col S (índice 18)
     const conviene   = String(posData[i][19] || '');    // col T (índice 19)
     const clase      = String(posData[i][23] || '');    // col X (índice 23)
 
     if (clase === 'Renta Mixta') continue;
+    if (!precioUSD || !precioARS || mepActual <= 0) continue;
+
+    const precioARSenUSD = precioARS / mepActual;
+    // v3.41: antes se usaba la col S de Posiciones ("Prima/Desc %"), pero
+    // esa columna es la prima del CEDEAR contra su teórico NYSE (E vs Q)
+    // — una métrica distinta, y solo existe para CEDEARs con ratio y
+    // ticker NYSE (de ahí que siempre salieran las mismas ~27 CEDEARs con
+    // el mismo numerito: era en realidad el gap estructural MEP-vs-CCL
+    // de esa fórmula, no un arbitraje ARS/USD real). Acá lo que
+    // corresponde es la prima entre el MISMO ticker cotizado en pesos
+    // (convertido por MEP) y en dólares — se calcula directo, igual que
+    // ya hace la col T ("Conviene Operar") más abajo.
+    const primaDesc = (precioARSenUSD - precioUSD) / precioUSD;
     if (Math.abs(primaDesc) < 0.015) continue;
-    if (!precioUSD || !precioARS) continue;
 
     arbitrajes.push({
       ticker,
-      precioARSenUSD: mepActual > 0 ? precioARS / mepActual : 0,
+      precioARSenUSD,
       precioUSD,
       primaDesc,
       conviene
@@ -5081,33 +5148,31 @@ function generarRadar() {
   f++;
 
   sheet.getRange(f, 1, 1, 4).setValues([[
-    'Ticker', 'Nombre', 'TIR actual (IOL)', 'Estado'
+    'Ticker', 'Nombre', 'TIR actual (tu posición)', 'Estado'
   ]]);
   subtit(f, 4);
   f++;
 
-  // Buscar posiciones de RF y traer TIR desde API — en batch, no una request por ticker.
-  const rfTickers = [];
-  for (let i = 1; i < posData.length; i++) {
-    const ticker = String(posData[i][0] || '').trim();
-    const clase  = String(posData[i][23] || '');
-    if (!ticker || clase !== 'Renta Fija') continue;
-    rfTickers.push(ticker);
-  }
-  const rfEndpoints  = rfTickers.map(t => `/api/BCBA/Titulos/${t}/Cotizacion`);
-  const rfRespuestas = _fetchIOLBatch(rfEndpoints);
-
+  // v3.41: antes pedía la TIR a /api/BCBA/Titulos/{ticker}/Cotizacion,
+  // pero esa cotización de IOL no devuelve ningún campo de TIR/rendimiento
+  // para ONs/Bonos — alertasRF quedaba siempre vacía, sección muerta. La
+  // TIR money-weighted de cada posición ya se calcula en Posiciones
+  // (col M, el mismo _xirr que usa Sugerencia de Inversión más arriba) —
+  // se reutiliza esa en vez de pedirle a la API un dato que no expone.
   const alertasRF = [];
-  rfTickers.forEach((ticker, idx) => {
-    const data = rfRespuestas[rfEndpoints[idx]];
-    if (!data) return;
-    const tir = parseFloat(data.tir || data.rendimiento || 0);
-    if (!tir) return;
-    alertasRF.push({ ticker, nombre: data.descripcion || ticker, tir });
-  });
+  for (let i = 1; i < posData.length; i++) {
+    const clase = String(posData[i][23] || '');
+    if (clase !== 'Renta Fija') continue;
+    const ticker = String(posData[i][0] || '').trim();
+    if (!ticker) continue;
+    const nombre = String(posData[i][22] || '').trim() || ticker;
+    const tir    = parseFloat(posData[i][12]);
+    if (isNaN(tir)) continue;
+    alertasRF.push({ ticker, nombre, tir });
+  }
 
   if (alertasRF.length === 0) {
-    fila(f, ['No hay posiciones de RF o TIR no disponible en API', '', '', ''], C.GRIS);
+    fila(f, ['No hay posiciones de RF o TIR no disponible', '', '', ''], C.GRIS);
     f++;
   } else {
     alertasRF.sort((a, b) => a.tir - b.tir);

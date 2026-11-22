@@ -107,6 +107,66 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.41 — 3 fixes de Radar (Arbitraje, Alertas RF, Sugerencia) + lock entre corridas
+
+Siguiente tanda de pendientes de la revisión con Opus (v3.38): "Seguí" —
+las 3 secciones rotas de Radar y el lock entre corridas. Quedan afuera
+todavía: comisiones ausentes desde mayo 2026 (ver nota abajo) y los
+hallazgos "menores" de bajo impacto.
+
+**1. Arbitraje ARS/USD marcaba 27 CEDEARs con el mismo ~6%, siempre.**
+Causa: tomaba la "Prima/Desc %" de Posiciones (col S), que es la prima
+del CEDEAR contra su precio teórico de NYSE (`GOOGLEFINANCE` × ratio) —
+una cuenta completamente distinta, y que solo existe para CEDEARs con
+ratio y ticker NYSE cargados. El ~6% repetido en todos era en realidad
+el gap estructural MEP-vs-CCL de esa fórmula, no un arbitraje ARS/USD
+real. Lo que la sección necesita es la prima entre el MISMO ticker
+cotizado en pesos (convertido por MEP) y en dólares — ahora se calcula
+directo (`precioARS/MEP` vs `precioUSD`), la misma cuenta que ya usa la
+columna "Conviene Operar" de Posiciones.
+
+**2. Alertas Renta Fija siempre vacía.** Pedía la TIR a
+`/api/BCBA/Titulos/{ticker}/Cotizacion`, pero esa cotización de IOL no
+devuelve ningún campo de TIR/rendimiento para ONs/Bonos — la sección
+nunca tenía nada que mostrar. La TIR money-weighted por posición ya se
+calcula en Posiciones (col M, el mismo `_xirr` que usa Historial/
+Portfolio/Sugerencia de Inversión) — ahora Alertas Renta Fija reutiliza
+ese dato en vez de pedirle a la API un campo que no expone.
+
+**3. Sugerencia de Inversión no usaba bien el efectivo disponible si
+faltaba alguna clase.** El presupuesto se repartía entre Renta
+Variable/Fija/Mixta según qué tan lejos estaba cada una de su target —
+pero si no tenías ninguna posición de Renta Mixta/FCI, `pctRM=0` y el
+gap de esa clase (su target completo, ej. 10%) se llevaba la mayor
+parte del presupuesto para una lista de candidatos vacía a propósito
+(la sugerencia nunca propone tickers nuevos). Esa porción quedaba
+"sin asignar" con una nota ambigua, en vez de repartirse entre RV/RF que
+sí tenían dónde sugerir. Ahora el presupuesto solo compite entre las
+clases que tienen al menos un candidato real.
+
+**4. Sin lock entre corridas simultáneas.** Si el botón del celu y el
+trigger diario corrían al mismo tiempo, `importarMovimientosIOL()` no es
+atómico (lee los movimientos existentes y pega los nuevos en pasos
+separados) — podían duplicar filas en Movimientos o pisarse en
+Historial/Posiciones a medio escribir. `_actualizarTodoCore()` ahora usa
+`LockService.getScriptLock()`: si ya hay una actualización en curso, la
+segunda corta con un mensaje claro ("Ya hay otra actualización en
+curso...") en vez de competir por las mismas hojas.
+
+**Sin tocar todavía — comisiones ausentes desde mayo 2026**: se
+investigó si la API de IOL expone la comisión en algún campo. El
+endpoint que usa `importarMovimientosIOL()` (`/api/operaciones`) no trae
+ningún campo de comisión — se confirmó con una consulta real a la cuenta
+(una Compra de 6 NFLX a $2.735 = $16.410 bruto). El movimiento de cuenta
+sí refleja el efectivo neto con la comisión ya descontada ($16.618,49,
+una diferencia de 1,27%), pero viene de un endpoint distinto que ya se
+intentó replicar desde Apps Script en una ronda de diagnóstico anterior
+(ver v3.x "Diagnóstico: movimientos de cuenta") y dio 404/500 en todas
+sus variantes — no se encontró la forma de pegarle a ese mismo dato
+desde el script con el token normal de usuario. Mantenerlo pendiente en
+vez de adivinar más endpoints, siguiendo la misma decisión que ya se
+tomó para depósitos/extracciones por API.
+
 ## v3.40 — Regla general de moneda (reemplaza excepciones GD29/PBA25/BDC24)
 
 Siguiente punto pendiente de la revisión con Opus (v3.38), ahora pedido
