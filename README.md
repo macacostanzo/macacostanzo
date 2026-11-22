@@ -107,6 +107,69 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.43 — CRCEO, BOPREAL e IRCFO (a pedido explícito: "encará los de CRCEO, BOPREAL e IRCFO también")
+
+**1. CRCEO — en realidad era un bug de toda la cuenta, no solo de CRCEO.**
+Investigando el caso puntual de CRCEO aparecieron las filas: casi todo
+pago de Renta/Dividendos de la cuenta tiene una fila "hermana" con un
+monto NEGATIVO (ej. `Pago de Dividendos(NVDA) -0,61`, repetido en
+prácticamente cada dividendo de cada CEDEAR — una retención o gasto que
+IOL registra aparte) — y en el caso específico de CRCEO, además, dos
+correcciones puntuales con montos negativos grandes y en dólares
+directo (`Pago de Renta(CRCEO US$) -12,87` y
+`Pago de Amortización(CRCEO US$) -2,52`, del 26/03/2024).
+
+Causa: `calcularPosiciones()` solo sumaba a Ingresos cuando
+`montoUSD > 0` — cualquier monto negativo de Renta/Dividendos se
+ignoraba en vez de restarse. Se armó un script sobre la planilla real
+de Maki que suma TODAS las filas negativas de Renta/Dividendos de toda
+la cuenta: 435 filas, ~USD 20 en total que no se estaban restando de
+Ingresos (la mayor parte de un solo caso en dólares — CRCEO — el resto
+son retenciones de centavos repartidas en cientos de pagos). Arreglado
+también el mismo problema en el flujo de TIR individual por ticker, que
+además invertía el signo con `Math.abs()`.
+
+**2. BOPREAL — canje de BPO27 no transfería el costo.** El 07/03/2024,
+BCRA canjeó 110 nominales de BPO27 por 110 nominales repartidos en
+BPOA7 (22) + BPOB7 (22) + BPOC7 (33) + BPOD7 (33), las 5 filas con
+Monto=0 (puro cambio de instrumento, sin efectivo). `calcularPosiciones()`
+no tenía ningún caso para esto: leía la baja de BPO27 (Amortización,
+cantidad negativa, monto $0) como si el bono se hubiera perdido
+totalmente — realizando una pérdida igual a TODO el costo invertido — y
+las altas de las 4 series nuevas (Amortización, cantidad positiva,
+monto $0) les quedaba costo $0. Esa pérdida y esa "ganancia al vender"
+quedan fantasma: se cancelan en el tiempo, pero mientras tanto
+distorsionan Ganancia Realizada año por año y el G/P No Realizado de
+las 4 series nuevas.
+
+**Fix**: se agregó el caso puntual de este canje (fecha + tickers
+exactos, igual que las excepciones de GD29/PBA25/BDC24/TLCPD en su
+momento) — el costo de BPO27 se transfiere proporcional a los
+nominales que recibió cada serie nueva, sin realizar ninguna pérdida.
+No es una solución genérica para "cualquier canje" (eso necesitaría
+poder distinguir un canje real de un default real con recupero $0, algo
+que Movimientos no dice) — si aparece otro canje de este tipo en el
+futuro, hay que agregarlo a mano con la misma lógica, con los datos
+reales en mano.
+
+**3. IRCFO — investigado, sin tocar.** El G/P No Realizado de -50% que
+muestra Posiciones es real en el sentido de que el cálculo está bien
+hecho con los datos que hay — pero el dato que hay es incompleto.
+IRCFO hace pagos de "Amortización" en efectivo con `cantidad=0` (IOL no
+dice cuánto nominal se amortizó en cada pago), así que el código los
+trata como "Ingresos" en vez de como devolución parcial de capital —
+correcto para el cálculo agregado (Retorno Total e TIR, que ya están
+bien, por eso Opus no lo marcó como error de cálculo), pero no reduce
+el costo restante, y el Valor Actual sí refleja un nominal/precio
+amortizado — de ahí el corrimiento: parte de lo que debería verse como
+"ya cobrado, costo recuperado" aparece en cambio como "G/P No
+Realizado muy negativo" compensado por "Ingresos" más altos. Arreglarlo
+bien necesitaría el cronograma real de amortización del bono (qué % de
+nominal devuelve cada pago), un dato que no está en Movimientos ni en
+la API — siguiendo la misma línea de "no adivinar" de los pendientes
+anteriores (comisiones, movimientos de cuenta), se deja así: es un
+corrimiento cosmético entre dos columnas, no un error en la plata total.
+
 ## v3.42 — Hallazgos "menores" de la revisión con Opus (Equivalencias, token, HTML)
 
 Siguiente tanda ("Si seguí corrigiendo"): los hallazgos de bajo impacto

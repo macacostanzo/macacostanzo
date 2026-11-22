@@ -1,8 +1,26 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.42                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.43                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.43 (CRCEO, BOPREAL, IRCFO — a pedido explícito):   ║
+ * ║  - Ingresos por Renta/Dividendos ignoraba cualquier monto       ║
+ * ║    negativo (retenciones/correcciones) en vez de restarlo —    ║
+ * ║    afecta a CASI TODA LA CUENTA, no solo CRCEO (confirmado:     ║
+ * ║    435 filas negativas, ~USD 20 en total que no se restaban).  ║
+ * ║    Ahora se suma el monto con su signo real, sea + o -.        ║
+ * ║  - Canje BOPREAL (07/03/2024, BPO27 → BPOA7/B7/C7/D7, 110      ║
+ * ║    nominales, $0 en las 5 filas): se leía como una pérdida      ║
+ * ║    total del costo de BPO27 + costo $0 en las series nuevas —   ║
+ * ║    ahora el costo se transfiere proporcional a los nominales    ║
+ * ║    que recibió cada serie nueva, sin realizar nada.             ║
+ * ║  - IRCFO: investigado, no se tocó — su -50% de G/P No Real. es  ║
+ * ║    un corrimiento cosmético entre Ingresos y G/P No Realizado   ║
+ * ║    (el Retorno Total y el TIR ya están bien, por eso el reporte ║
+ * ║    de Opus no lo marcó como error de cálculo). Arreglarlo bien  ║
+ * ║    necesitaría el cronograma real de amortización del bono      ║
+ * ║    (qué % de nominal se devolvió en cada pago), un dato que no   ║
+ * ║    está en la cuenta ni en la API — no se adivina, ver README.  ║
  * ║  CAMBIOS v3.42 (hallazgos "menores" de la revisión con Opus):  ║
  * ║  - 3 filas de más/mal etiquetadas en Equivalencias: PAMPAD y   ║
  * ║    QQDD eran duplicados de PAMPD/QQQD con el mismo ticker base ║
@@ -2204,6 +2222,38 @@ function calcularPosiciones() {
   const advertencias = new Set();
   const posiciones   = {};
 
+  // v3.43: canje BOPREAL conocido — BCRA canjeó 110 nominales de BPO27
+  // por 22+22+33+33=110 nominales repartidos en BPOA7/BPOB7/BPOC7/BPOD7
+  // el 07/03/2024, las 5 filas con Monto=0 (sin efectivo de por medio).
+  // Sin este fix, la baja de BPO27 (AMORTIZACION cantidad<0, monto=0) se
+  // leía como una pérdida total del costo invertido, y las altas de las
+  // 4 series nuevas (AMORTIZACION cantidad>0, monto=0) quedaban con
+  // costo $0 — una "pérdida" y una "ganancia al vender" fantasmas que se
+  // cancelarían con el tiempo pero distorsionan Ganancia Realizada año
+  // por año y el G/P No Realizado mientras se mantienen. Confirmado
+  // contra los datos reales de Maki (única Compra de BPO27 antes del
+  // canje, monto=0 en las 5 filas del canje, nominales que cierran
+  // exacto 110=110). Se transfiere el costo de BPO27 proporcional a los
+  // nominales que recibió cada serie nueva, en vez de realizarlo.
+  const CANJE_BOPREAL_FECHA   = '2024-03-07';
+  const CANJE_BOPREAL_ORIGEN  = 'BPO27';
+  const CANJE_BOPREAL_DESTINO = { BPOA7: 22, BPOB7: 22, BPOC7: 33, BPOD7: 33 };
+  const CANJE_BOPREAL_TOTAL   = 110;
+  let bopCostoOrigen = 0;
+  let bopCantOrigen  = 0;
+  movs.forEach(m => {
+    if (m.tickerBase !== CANJE_BOPREAL_ORIGEN || m.fecha >= CANJE_BOPREAL_FECHA) return;
+    const cantAbsM = Math.abs(m.cantidad);
+    if (['COMPRA','TRANSF_IN'].includes(m.tipo)) {
+      bopCantOrigen  += cantAbsM;
+      bopCostoOrigen += Math.abs(m.montoUSD || 0);
+    } else if (['VENTA','TRANSF_OUT'].includes(m.tipo)) {
+      const costoVendido = bopCantOrigen > 0 ? (bopCostoOrigen / bopCantOrigen) * cantAbsM : 0;
+      bopCantOrigen  -= cantAbsM;
+      bopCostoOrigen -= costoVendido;
+    }
+  });
+
   movs.forEach(m => {
     const { fecha, tipo, tickerBase, tickerNYSE, nombre, clase, tipoActivo,
             emisorON, exchange, cantidad, montoUSD, moneda } = m;
@@ -2249,7 +2299,18 @@ function calcularPosiciones() {
       if (pos.costoActual < 0)      pos.costoActual = 0;
 
     } else if (tipo === 'AMORTIZACION') {
-      if (cantidad < 0) {
+      if (tickerBase === CANJE_BOPREAL_ORIGEN && fecha === CANJE_BOPREAL_FECHA &&
+          cantidad < 0 && montoAbs === 0) {
+        // Baja por canje (ver nota más arriba) — el costo se transfiere
+        // a las series nuevas, no se realiza como pérdida.
+        pos.cantActual  = 0;
+        pos.costoActual = 0;
+      } else if (CANJE_BOPREAL_DESTINO[tickerBase] && fecha === CANJE_BOPREAL_FECHA &&
+                 cantidad > 0 && montoAbs === 0 && bopCostoOrigen > 0) {
+        if (!pos.primeraCompra) pos.primeraCompra = fecha;
+        pos.cantActual  += cantAbs;
+        pos.costoActual += bopCostoOrigen * (CANJE_BOPREAL_DESTINO[tickerBase] / CANJE_BOPREAL_TOTAL);
+      } else if (cantidad < 0) {
         const costoPromedio    = pos.cantActual > 0 ? pos.costoActual / pos.cantActual : 0;
         pos.gananciaRealizada += montoAbs - (costoPromedio * pos.cantActual);
         pos.cantActual  = 0;
@@ -2265,7 +2326,18 @@ function calcularPosiciones() {
     } else if (['RENTA','DIVIDENDO'].includes(tipo)) {
       if (cantAbs > 0 && montoAbs === 0) {
         pos.cantActual += cantAbs;
-      } else if ((montoUSD || 0) > 0) {
+      } else if (montoUSD) {
+        // v3.43: antes solo se sumaba si montoUSD > 0 — pero casi todo
+        // pago de renta/dividendo tiene una fila "hermana" en pesos con
+        // un monto NEGATIVO chiquito (ej. "Pago de Dividendos(NVDA)
+        // -0,61"), que se repite en prácticamente cada pago de toda la
+        // cuenta (retención/gasto que el broker descuenta aparte) — y en
+        // algunos casos puntuales (CRCEO, reversas/correcciones) el
+        // monto negativo es grande y en dólares directo. Cualquiera de
+        // los dos se estaba ignorando en vez de restarse de Ingresos,
+        // sobrestimando Ingresos/Ganancia Total en todo el portfolio
+        // (confirmado contra datos reales: ~USD 20 en total, la mayor
+        // parte de un solo caso de CRCEO en dólares).
         pos.ingresos += montoUSD;
       }
     }
@@ -2284,13 +2356,17 @@ function calcularPosiciones() {
       flujosPorTicker[tickerBase].push({ fecha, monto: -Math.abs(montoUSD) });
     } else if (['VENTA','RESCATE_FCI','TRANSF_OUT'].includes(tipo)) {
       flujosPorTicker[tickerBase].push({ fecha, monto: Math.abs(montoUSD) });
-    } else if (['RENTA','DIVIDENDO'].includes(tipo) && montoUSD > 0) {
-      flujosPorTicker[tickerBase].push({ fecha, monto: Math.abs(montoUSD) });
+    } else if (['RENTA','DIVIDENDO'].includes(tipo) && montoUSD) {
+      // v3.43: mismo fix que en Ingresos arriba — antes exigía
+      // montoUSD>0 y además aplicaba Math.abs(), así que un monto
+      // negativo (retención/corrección) quedaba afuera del todo en vez
+      // de entrar como salida de caja real para el TIR individual.
+      flujosPorTicker[tickerBase].push({ fecha, monto: montoUSD });
     } else if (tipo === 'AMORTIZACION') {
       if (cantidad > 0) {
         flujosPorTicker[tickerBase].push({ fecha, monto: Math.abs(montoUSD) });
-      } else if (cantidad === 0 && (montoUSD || 0) > 0) {
-        flujosPorTicker[tickerBase].push({ fecha, monto: Math.abs(montoUSD) });
+      } else if (cantidad === 0 && montoUSD) {
+        flujosPorTicker[tickerBase].push({ fecha, monto: montoUSD });
       }
     }
   });
