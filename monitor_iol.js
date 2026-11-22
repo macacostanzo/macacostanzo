@@ -1,8 +1,27 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.41                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.42                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.42 (hallazgos "menores" de la revisión con Opus):  ║
+ * ║  - 3 filas de más/mal etiquetadas en Equivalencias: PAMPAD y   ║
+ * ║    QQDD eran duplicados de PAMPD/QQQD con el mismo ticker base ║
+ * ║    — por el "último gana" al armar el mapa ticker USD, podían  ║
+ * ║    tapar al ticker real y dejar Precio USD vacío para esa      ║
+ * ║    posición. RUCDO estaba sembrado con Moneda_Op=USD cuando es ║
+ * ║    el par ARS de RUCDD (afecta la regla general de moneda de   ║
+ * ║    v3.40 para Compra/Venta de RUCDO). ⚠️ Revisar Equivalencias: ║
+ * ║    si ya tenés filas MSFDT/PAMPAD/QQDD (poblarEquivalencias()  ║
+ * ║    nunca las borra solo), borralas a mano.                     ║
+ * ║  - Token IOL y saldo cacheado pasan de ScriptProperties a      ║
+ * ║    UserProperties — antes cualquiera con acceso de edición a   ║
+ * ║    la hoja podía leer el token desde el editor de Apps Script;  ║
+ * ║    ahora queda aislado a tu cuenta. Vas a tener que volver a    ║
+ * ║    iniciar sesión IOL una vez después de este cambio.          ║
+ * ║  - La nota de "última corrida" en la página web (doGet) se      ║
+ * ║    mete en el HTML sin escapar — bajo riesgo (la escribe el     ║
+ * ║    propio script, acceso ya es "Solo yo"), pero ahora se        ║
+ * ║    escapa por las dudas.                                        ║
  * ║  CAMBIOS v3.41 (3 fixes de Radar + lock entre corridas):       ║
  * ║  - Arbitraje ARS/USD usaba la col S de Posiciones (prima del   ║
  * ║    CEDEAR vs teórico NYSE) en vez de calcular la prima ARS/USD ║
@@ -650,7 +669,7 @@ function abrirConfig() {
 // contraseña NUNCA se guarda
 // ─────────────────────────────────────────────
 function _getTokenIOL() {
-  const props       = PropertiesService.getScriptProperties();
+  const props       = PropertiesService.getUserProperties();
   const tokenGuard  = props.getProperty('iol_token');
   const tokenExpira = parseInt(props.getProperty('iol_token_expira') || '0');
 
@@ -702,7 +721,7 @@ function _getTokenIOL() {
 // La contraseña NUNCA se guarda acá tampoco — se usa una sola vez para
 // este pedido y se descarta apenas termina la función.
 function _solicitarTokenIOL(usuario, password) {
-  const props = PropertiesService.getScriptProperties();
+  const props = PropertiesService.getUserProperties();
 
   const resp = UrlFetchApp.fetch(`${IOL_BASE}/token`, {
     method:  'POST',
@@ -740,7 +759,7 @@ function _fetchIOL(endpoint, method, payload) {
 
   if (codigo === 401) {
     // Token rechazado → limpiar para que la próxima vez pida credenciales
-    PropertiesService.getScriptProperties().deleteProperty('iol_token');
+    PropertiesService.getUserProperties().deleteProperty('iol_token');
     throw new Error('Token rechazado por IOL. Volvé a ejecutar para ingresar credenciales.');
   }
   if (codigo !== 200) throw new Error(`IOL API error ${codigo} (${endpoint}): ${texto.substring(0, 200)}`);
@@ -799,7 +818,7 @@ function configurarAccesoIOL() {
   const ui = SpreadsheetApp.getUi();
   try {
     // Limpiar token viejo
-    const props = PropertiesService.getScriptProperties();
+    const props = PropertiesService.getUserProperties();
     props.deleteProperty('iol_token');
     props.deleteProperty('iol_token_expira');
 
@@ -1216,7 +1235,7 @@ function _leerIngresosEgresos() {
 function _actualizarSaldoIOL() {
   try {
     const data  = _fetchIOL('/api/v2/estadocuenta');
-    const props = PropertiesService.getScriptProperties();
+    const props = PropertiesService.getUserProperties();
 
     let saldoUSD = 0;
     let saldoARS = 0;
@@ -1508,6 +1527,20 @@ function actualizarTodoProgramado() {
 // Implementar → Nueva implementación → Aplicación web — Ejecutar como:
 // Yo / Acceso: Solo yo) da una URL que, guardada como acceso directo en
 // la pantalla de inicio, se abre y se comporta como una app con un botón.
+// v3.42: ultimaNota (la nota de A1 en Radar) se metía directo en el HTML
+// de doGet() sin escapar — en la práctica la escribe el propio script
+// (timestamps, mensajes de error), pero un mensaje de error puede
+// arrastrar texto crudo de la API de IOL y nada obliga a que ese texto
+// no tenga "<"/">"/etc. Esto corta cualquier HTML/script que se cuele ahí.
+function _escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function doGet(e) {
   let ultimaNota = '';
   try {
@@ -1526,7 +1559,7 @@ function doGet(e) {
   // v3.32: estado del token al cargar la página — así se ve de entrada
   // si hace falta loguearse antes de tocar "Actualizar Todo", en vez de
   // enterarse recién después de tocarlo y que falle.
-  const props       = PropertiesService.getScriptProperties();
+  const props       = PropertiesService.getUserProperties();
   const tokenExpira = parseInt(props.getProperty('iol_token_expira') || '0');
   const tokenValido = Date.now() < tokenExpira;
   const minutosRestantes = tokenValido ? Math.ceil((tokenExpira - Date.now()) / 60000) : 0;
@@ -1566,7 +1599,7 @@ function doGet(e) {
 
   <button id="btn" onclick="actualizar()">🔄 Actualizar Todo</button>
   <div id="resultado"></div>
-  <div id="ultima">${ultimaNota ? 'Última corrida:\n' + ultimaNota : ''}</div>
+  <div id="ultima">${ultimaNota ? 'Última corrida:\n' + _escapeHtml(ultimaNota) : ''}</div>
   ${urlSheet ? `<a class="abrir-sheet" href="${urlSheet}" target="_blank">📄 Abrir planilla completa →</a>` : ''}
   <script>
     function login() {
@@ -3093,7 +3126,7 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
 function _escribirPortfolio(abiertas, cerradas, config) {
   config = config || _cargarConfig();
   const sheet = _getSheet(HOJAS.PORTFOLIO);
-  const props = PropertiesService.getScriptProperties();
+  const props = PropertiesService.getUserProperties();
 
   // v3.29: las fórmulas de abajo (XIRR y "Flujos de Capital") apuntaban a
   // rangos fijos de Flujos_TIR — algunas hasta la fila 2000, y las de
@@ -4032,7 +4065,6 @@ function poblarEquivalencias() {
     ['NVDAD','NVDA','NVDA','NVIDIA Corp. (USD)','USD','Renta Variable','CEDEAR','','NASDAQ'],
     ['ORCL','ORCL','ORCL','Oracle Corp.','ARS','Renta Variable','CEDEAR','','NYSE'],
     ['PAMP','PAMP','','Pampa Energía','ARS','Renta Variable','Accion','',''],
-    ['PAMPAD','PAMP','','Pampa Energía (USD)','USD','Renta Variable','Accion','',''],
     ['PBR','PBR','PBR','Petrobras','ARS','Renta Variable','CEDEAR','','NYSE'],
     ['PBRD','PBR','PBR','Petrobras (USD)','USD','Renta Variable','CEDEAR','','NYSE'],
     ['PEP','PEP','PEP','PepsiCo Inc.','ARS','Renta Variable','CEDEAR','','NASDAQ'],
@@ -4044,7 +4076,6 @@ function poblarEquivalencias() {
     ['PRERMDB','PRERMDB','','FCI Premier Renta Mixta Dólares B','USD','Renta Fija','FCI','',''],
     ['PYPL','PYPL','PYPL','PayPal Holdings','ARS','Renta Variable','CEDEAR','','NASDAQ'],
     ['QQQ','QQQ','QQQ','Invesco QQQ Trust','ARS','Renta Variable','ETF','','NASDAQ'],
-    ['QQDD','QQQ','QQQ','Invesco QQQ Trust (USD)','USD','Renta Variable','ETF','','NASDAQ'],
     ['RIO','RIO','RIO','Rio Tinto PLC','ARS','Renta Variable','CEDEAR','','NYSE'],
     ['RIOD','RIO','RIO','Rio Tinto PLC (USD)','USD','Renta Variable','CEDEAR','','NYSE'],
     ['RUCAD','RUCAO','','ON MSU Energy Clase 10 USD','USD','Renta Fija','ON','MSU Energy',''],
@@ -4170,7 +4201,7 @@ function poblarEquivalencias() {
     ['PBA25','PBA25','','Bono Provincia Buenos Aires 2025','USD','Renta Fija','Bono','Pcia. Buenos Aires',''],
     ['PBY22','PBY22','','Bono PBY22','ARS','Renta Fija','Bono','Tesoro Nacional',''],
     ['QQQD','QQQ','QQQ','Invesco QQQ Trust','USD','Renta Variable','ETF','','NASDAQ'],
-    ['RUCDO','RUCDO','','ON MSU Energy Clase 12 USD','USD','Renta Fija','ON','MSU Energy',''],
+    ['RUCDO','RUCDO','','ON MSU Energy Clase 12 ARS','ARS','Renta Fija','ON','MSU Energy',''],
     ['SUPV','SUPV','','Banco Supervielle','ARS','Renta Variable','Accion','',''],
     ['T2X3','T2X3','','Bono CER T2X3','ARS','Renta Fija','Bono','Tesoro Nacional',''],
     ['T2X4','T2X4','','Bono CER T2X4','ARS','Renta Fija','Bono','Tesoro Nacional',''],

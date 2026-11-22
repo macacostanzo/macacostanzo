@@ -107,6 +107,68 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.42 — Hallazgos "menores" de la revisión con Opus (Equivalencias, token, HTML)
+
+Siguiente tanda ("Si seguí corrigiendo"): los hallazgos de bajo impacto
+que quedaban pendientes de v3.38, los que se pudieron resolver con
+evidencia concreta en vez de adivinar.
+
+**1. Tres filas problemáticas en Equivalencias — confirmado bajando la
+planilla real de Maki y comparando contra Movimientos.** `PAMPAD` y
+`QQDD` son filas de más: mismo `Ticker_Base` y `Moneda_Op=USD` que
+`PAMPD`/`QQQD` respectivamente, pero ningún movimiento real usa esos
+dos tickers (los trades reales dicen `Venta(PAMPD)`/`Compra(QQQD)`).
+`_cargarTickerUSD()` arma un mapa `tickerBase → ticker USD` y, si hay
+dos filas USD para la misma base, se queda con la que lee último — en
+el peor caso, eso deja el mapa apuntando al ticker que no existe de
+verdad, y la cotización USD de esa posición queda vacía en Posiciones.
+Encontrado así porque el finding de Opus mencionaba "QQDD" por nombre;
+se armó un script que detecta cualquier `Ticker_Base` con más de un
+ticker USD en el seed de `poblarEquivalencias()` y salieron exactamente
+esos dos pares, más un tercero no mencionado por Opus: `RUCDO` estaba
+sembrado con `Moneda_Op=USD`, pero es el ticker ARS del bono (el par
+USD es `RUCDD`) — mismo tipo de error que TLCPD en v3.37, y relevante
+para la regla general de moneda de v3.40 (hoy decide la moneda de
+Compra/Venta por esta misma columna).
+
+Quitadas `PAMPAD` y `QQDD` del seed, y corregido `RUCDO` a
+`Moneda_Op=ARS`. **⚠️ Acción manual**: `poblarEquivalencias()` solo
+agrega filas que faltan, nunca borra una que ya existe — si tu hoja de
+Equivalencias ya tiene `PAMPAD` o `QQDD` (common a varias cuentas, se
+sembraron en una versión anterior), hay que borrarlas a mano. Además
+apareció una tercera fila fantasma que ni siquiera está en el código
+actual: `MSFDT` (duplicado de `MSFTD`, quedó de alguna versión vieja ya
+corregida) — bórrala también si existe. `RUCDO` en tu hoja real ya
+estaba en ARS (correcto), así que ese no necesita corrección manual.
+
+**2. Token IOL y saldo cacheado: ScriptProperties → UserProperties.**
+`ScriptProperties` es compartido por cualquiera con acceso de edición a
+la hoja — alguien con ese acceso podía leer tu token de sesión IOL
+abriendo el editor de Apps Script (Ver → Propiedades del proyecto).
+`UserProperties` aísla el valor a la cuenta de quien ejecuta el script
+— como el Web App corre "Ejecutar como: Yo" y los triggers corren como
+quien los instaló, en la práctica sigue siendo tu cuenta la que lee/
+escribe, pero ya no queda expuesto a quien simplemente tenga edición
+sobre la hoja. Efecto colateral esperado: la primera vez después de
+este cambio hay que volver a iniciar sesión IOL (el token viejo quedó
+guardado en el lugar anterior, que ya no se lee).
+
+**3. HTML sin escapar en la nota de "última corrida" del Web App.** La
+nota de A1 en Radar se mete directo en el HTML de `doGet()`. Riesgo
+bajo en la práctica (la escribe el propio script — timestamps, mensajes
+de error — y el acceso ya es "Solo yo"), pero un mensaje de error podría
+arrastrar texto crudo de alguna respuesta de la API y nada garantiza que
+no tenga caracteres como `<`/`>`. Se agregó un escape simple por las
+dudas.
+
+**Sin tocar todavía** (necesitan más verificación caso por caso antes de
+tocar código, siguiendo la misma lógica de "no adivinar" de los
+pendientes anteriores): reversas de renta de CRCEO que se duplican
+(~USD 15), costo base del canje BOPREAL, el -50% de G/P que muestra
+IRCFO en Posiciones por cómo amortiza, y 4 precios guardados como texto
+en Movimientos que se leen ~100x de menos (no afecta Costo, que usa la
+columna Monto, solo la columna Precio mostrada).
+
 ## v3.41 — 3 fixes de Radar (Arbitraje, Alertas RF, Sugerencia) + lock entre corridas
 
 Siguiente tanda de pendientes de la revisión con Opus (v3.38): "Seguí" —
