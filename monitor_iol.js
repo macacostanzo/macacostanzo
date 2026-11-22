@@ -1,15 +1,16 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.45                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.46                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
- * ║  CAMBIOS v3.45 (benchmark contra S&P 500 en Portfolio):        ║
- * ║  - Nueva sección "BENCHMARK" en Portfolio, debajo de la TIR     ║
- * ║    del Portfolio: rendimiento anualizado del S&P 500 (SPY)      ║
- * ║    desde tu primer flujo de capital, con un semáforo vs. tu TIR.║
- * ║    Aclarado que NO es money-weighted (no pondera por fecha de    ║
- * ║    cada depósito como la TIR sí) — referencia aproximada, no    ║
- * ║    comparación número contra número.                            ║
+ * ║  CAMBIOS v3.46 (benchmark S&P 500 money-weighted de verdad):   ║
+ * ║  - v3.45 comparaba contra un CAGR simple desde el primer        ║
+ * ║    depósito — inútil si depositás mes a mes (feedback directo). ║
+ * ║    Ahora Flujos_TIR tiene columnas ocultas (H/I/K) que simulan   ║
+ * ║    comprar/vender S&P 500 con cada depósito/extracción real, en  ║
+ * ║    su fecha real, y Portfolio le calcula el XIRR a esa plata     ║
+ * ║    simulada con el mismo método que a tu TIR real — mismo        ║
+ * ║    criterio, misma ponderación por fecha, comparable de verdad.  ║
  * ║  CAMBIOS v3.44 (sacado Precio Teórico/Prima vs. NYSE):          ║
  * ║  - Un CEDEAR se arbitra todo el tiempo contra su subyacente,    ║
  * ║    así que la Prima/Desc % contra el precio teórico (cols Q/R/S ║
@@ -3279,34 +3280,32 @@ function _escribirPortfolio(abiertas, cerradas, config) {
   const filaTirPortfolio = f;
 
   // ── Benchmark ─────────────────────────────────────────────────────────
-  // v3.45: a pedido ("comparación contra benchmark... dónde lo pondrías").
-  // No es money-weighted como la TIR de arriba (cada depósito tuyo entró
-  // en una fecha distinta, esto es un CAGR simple desde el primer flujo)
-  // — por eso queda en una sección separada, como referencia aproximada,
-  // no como un número directamente comparable al de arriba.
+  // v3.46: money-weighted de verdad — "si depositás mes a mes, un CAGR
+  // simple desde el primer depósito no sirve" (feedback directo). Ahora
+  // simula, para CADA depósito/extracción real (mismas fechas, mismos
+  // montos — ver columnas ocultas H/I/K en Flujos_TIR), haber comprado/
+  // vendido S&P 500 (SPY) ese mismo día en vez de operar la cartera, y le
+  // calcula el XIRR a esa plata con el mismo método que a la TIR de
+  // arriba — mismo criterio, misma ponderación por fecha, directamente
+  // comparable.
   f++; f++;
-  escribirTitulo(f, '  BENCHMARK (referencia aproximada, no money-weighted)');
+  escribirTitulo(f, '  BENCHMARK (S&P 500, money-weighted igual que tu TIR)');
 
   f++; sheet.getRange(f, 1, 1, 2).merge().setValue(
-    '→ Rendimiento simple desde tu primer flujo de capital, NO ponderado ' +
-    'por fecha de cada depósito como la TIR de arriba — sirve para saber ' +
-    'si te convenía estar afuera del mercado, no para comparar número ' +
-    'contra número.'
+    '→ Qué TIR hubieras tenido si cada depósito/extracción real, en vez ' +
+    'de entrar a tu cartera, hubiera comprado/vendido S&P 500 ese mismo ' +
+    'día. Mismo método y ponderación por fecha que tu TIR de arriba.'
   ).setFontColor('#666666').setFontStyle('italic').setWrap(true);
-  sheet.setRowHeight(f, 50);
+  sheet.setRowHeight(f, 40);
 
-  f++; escribirFila(f, 'Desde (primer flujo de capital)',
-    `=IFERROR(MIN(${rangoFlujos('A')});"")`, 'dd/mm/yyyy');
-  const filaFechaMin = f;
-
-  f++; escribirFila(f, 'S&P 500 (SPY) anualizado desde esa fecha',
-    `=IFERROR((GOOGLEFINANCE("SPY")/INDEX(GOOGLEFINANCE("SPY";"price";B${filaFechaMin});2;2))^(365/(TODAY()-B${filaFechaMin}))-1;"Sin datos")`,
+  f++; escribirFila(f, 'TIR Anualizada si hubiera sido S&P 500 (XIRR)',
+    `=IFERROR(XIRR(${rangoFlujos('K')};${rangoFlujos('A')});"Sin datos suficientes")`,
     '0.00%');
   const filaBenchSPY = f;
 
   f++; sheet.getRange(f, 1).setValue('  → vs. tu TIR Anualizada');
   sheet.getRange(f, 3).setFormula(
-    `=IFERROR(IF(OR(ISTEXT(B${filaTirPortfolio});ISTEXT(B${filaBenchSPY}));"⚪";IF(B${filaTirPortfolio}>=B${filaBenchSPY};"✅ Le ganás al S&P 500";"🔴 Te gana el S&P 500"));"⚪")`
+    `=IF(OR(ISTEXT(B${filaTirPortfolio});ISTEXT(B${filaBenchSPY}));"⚪";IF(B${filaTirPortfolio}>=B${filaBenchSPY};"✅ Le ganás al S&P 500";"🔴 Te gana el S&P 500"))`
   );
   sheet.getRange(f, 3).setFontWeight('bold');
 
@@ -3819,6 +3818,11 @@ function _escribirFlujosTIR(movs) {
     'Depósitos/Extracciones',
     'Renta Variable', 'Renta Fija', 'Renta Mixta'
   ]]);
+  sheet.getRange(1, 8, 1, 3).setValues([[
+    'SPY precio histórico (benchmark)', 'SPY acciones compra/venta (benchmark)',
+    'Flujo benchmark SPY (para XIRR)'
+  ]]);
+  sheet.hideColumns(8, 3);
 
   // Cargar equivalencias para saber la clase de cada ticker
   const eqMap = _cargarEquivalencias();
@@ -3891,6 +3895,26 @@ function _escribirFlujosTIR(movs) {
   sheet.getRange(2, 1, rows.length, 1).setNumberFormat('yyyy-mm-dd');
   sheet.getRange(2, 2, rows.length, 5).setNumberFormat('"USD" #,##0.00');
 
+  // v3.46: columnas ocultas H/I — simulan "qué pasaba si cada depósito/
+  // extracción, en vez de entrar a la cartera, hubiera comprado/vendido
+  // S&P 500 (SPY) ese mismo día" — para el benchmark money-weighted de
+  // Portfolio. Solo se calculan para filas con Depósito/Extracción real
+  // (col C ≠ 0); el IF corta el cálculo antes de llegar al GOOGLEFINANCE
+  // en las demás filas, para no pedir más cotizaciones históricas de las
+  // necesarias.
+  sheet.getRange(2, 8, rows.length, 1).setFormulas(
+    rows.map((r, i) => [`=IF(C${i + 2}<>0;IFERROR(INDEX(GOOGLEFINANCE("SPY";"price";A${i + 2});2;2);"");"")`])
+  );
+  sheet.getRange(2, 9, rows.length, 1).setFormulas(
+    rows.map((r, i) => [`=IF(AND(C${i + 2}<>0;H${i + 2}<>"");-C${i + 2}/H${i + 2};0)`])
+  );
+  // Col K: mismo flujo que la TIR real (col C) para todas las filas de
+  // Depósito/Extracción, pero con el valor FINAL simulado en la fila de
+  // "valor actual" de más abajo en vez del valor real de la cartera —
+  // así da un XIRR comparable, mismas fechas y montos de entrada/salida,
+  // solo cambia en qué terminó esa plata.
+  sheet.getRange(2, 11, rows.length, 1).setValues(rows.map(r => [r[2]]));
+
   // Último flujo: valor actual por clase
   const ultimaFila = rows.length + 2;
   sheet.getRange(ultimaFila, 1).setValue(new Date()).setNumberFormat('yyyy-mm-dd');
@@ -3905,6 +3929,12 @@ function _escribirFlujosTIR(movs) {
   );
   sheet.getRange(ultimaFila, 6).setFormula(
     `=IFERROR(SUMIF(Posiciones!X:X;"Renta Mixta";Posiciones!G:G);0)`
+  );
+  // Col K en esta fila: valor que tendrían hoy las acciones de SPY
+  // "compradas" con cada depósito/extracción real (ver col I) — el
+  // equivalente del total de col B, pero para el benchmark.
+  sheet.getRange(ultimaFila, 11).setFormula(
+    `=IFERROR(SUM(I2:I${rows.length + 1})*GOOGLEFINANCE("SPY");"")`
   );
 }
 // ─────────────────────────────────────────────

@@ -107,6 +107,39 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.46 — Benchmark S&P 500 money-weighted de verdad
+
+Feedback directo apenas se vio v3.45 en uso: "si voy ingresando dinero
+mes a mes, así no sirve el cálculo". Correcto — un CAGR simple desde el
+primer depósito asume que TODO el dinero estuvo invertido desde el
+primer día, algo que no pasa si depositás de forma escalonada en el
+tiempo (subestima o sobrestima el benchmark según cómo haya ido el
+mercado en el medio).
+
+**Fix de fondo, no un parche**: ahora se simula, para CADA depósito/
+extracción real de tu cuenta (misma fecha, mismo monto), haber
+comprado/vendido S&P 500 (SPY) ese mismo día en vez de operar tu
+cartera — y se le calcula el XIRR a esa plata simulada con el MISMO
+método que usa tu TIR real (mismas fechas, misma ponderación). El
+resultado es un número directamente comparable al de tu TIR Anualizada,
+no una aproximación.
+
+**Cómo está armado** (`Flujos_TIR`, columnas ocultas H/I/K):
+- **H**: precio histórico de SPY en la fecha de cada fila (solo se pide
+  para filas con Depósito/Extracción real — el `IF` corta antes de
+  llegar al `GOOGLEFINANCE` en las demás filas, para no generar más
+  consultas históricas de las necesarias).
+- **I**: cuántas "acciones" de SPY hubiera comprado (o vendido, si es
+  una extracción) ese depósito a ese precio.
+- **K**: el flujo que se usa para el benchmark — igual al de la TIR real
+  (columna C) en todas las filas, excepto en la fila final de "valor
+  actual", donde en vez del valor real de tu cartera va el valor de
+  HOY de todas las acciones de SPY simuladas (`SUM(I) × precio actual`).
+
+Portfolio solo necesita un `XIRR(Flujos_TIR!K2:K...;Flujos_TIR!A2:A...)`
+— toda la simulación vive en Flujos_TIR, igual que ya vivía ahí toda la
+lógica de tu TIR real.
+
 ## v3.45 — Benchmark contra S&P 500 en Portfolio
 
 A pedido ("comparación contra benchmark... ¿dónde lo pondrías?" → "sí").
