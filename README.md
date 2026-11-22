@@ -107,6 +107,45 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.48 — Costo de oportunidad vs. S&P 500, por ticker y por lote real
+
+Objeción directa a la propuesta anterior (flag genérico "revisar
+tesis"): "pero qué hago con esas señales? Quiero datos que me ayuden a
+tomar decisiones concretas o que sirvan para preguntarle a la asesora".
+Y después, sobre la primera versión de esto (que usaba solo la fecha de
+Primera Compra como referencia): "no me sirve la compra de la primera
+vez y ya. En todos mis activos hago compras distribuidas".
+
+**Lo que se armó**: para cada posición de Renta Variable con más de 6
+meses y G/P No Realizado peor que -15%, una comparación de TIR real vs.
+"TIR si hubiera comprado S&P 500 en tus mismas fechas y montos" — no una
+sola fecha de referencia, sino **cada Compra y cada Venta real de ese
+ticker**, igual que ya hace tu propia TIR. Mismo mecanismo que el
+benchmark de Portfolio (v3.46), ahora aplicado por ticker.
+
+**Cómo está armado** (`Detalle_Compras`, que ya listaba cada Compra/
+Venta de tus posiciones abiertas):
+- Al final del bloque de cada ticker de Renta Variable se agrega una
+  fila "Ref. S&P 500".
+- Columnas ocultas M-Q: **M** precio histórico de SPY en la fecha de
+  cada Compra/Venta real; **N** el mismo monto con signo (Compra=
+  negativo, Venta=positivo) que usa tu propia TIR; **O** cuántas
+  "acciones" de SPY hubiera comprado/vendido ese mismo monto a ese
+  precio; en la fila "Ref. S&P 500": **N** pasa a ser el valor HOY de
+  todas esas acciones simuladas sumadas, **P** una clave para que
+  Radar la encuentre, **Q** el XIRR de ese ticker si hubiera sido SPY.
+- Radar (sección nueva "Costo de Oportunidad vs. S&P 500") lista cada
+  posición candidata con: hace cuánto, costo invertido, TIR real, y
+  TIR si hubiera sido S&P 500 — buscando esa columna Q por VLOOKUP.
+
+**Limitación aclarada en la propia planilla**: no incluye los
+dividendos propios del S&P 500 ni del ticker — es una comparación
+sobre precio y timing de compra/venta, no un cálculo perfecto a
+centavo, pero captura lo importante (el efecto de haber comprado ESE
+ticker en ESAS fechas en vez del índice). Sirve para decidir con un
+número en la mano, o para llevarle la pregunta concreta a la asesora —
+no para que la planilla te diga "vendé" o "sostené".
+
 ## v3.47 — Regresión de v3.44 encontrada al auditar ("¿algo más que encuentres?")
 
 Pidió una pasada de "qué más encontrás" después de cerrar el benchmark.

@@ -1,8 +1,21 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.47                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.48                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.48 (costo de oportunidad vs. S&P 500 por ticker):  ║
+ * ║  - Nueva sección en Radar: "Costo de Oportunidad vs. S&P 500"   ║
+ * ║    — para Renta Variable con más de 6 meses y G/P No Realizado  ║
+ * ║    peor que -15%, compara tu TIR real contra la TIR que         ║
+ * ║    hubieras tenido comprando/vendiendo S&P 500 en las MISMAS    ║
+ * ║    fechas y montos de tus compras/ventas reales (no solo la     ║
+ * ║    primera compra — pedido explícito por tener compras          ║
+ * ║    distribuidas en el tiempo en todos los activos).              ║
+ * ║  - Detalle_Compras gana una fila "Ref. S&P 500" al final de     ║
+ * ║    cada ticker de Renta Variable, y columnas ocultas (M-Q) que   ║
+ * ║    simulan la compra/venta de SPY lote por lote — mismo          ║
+ * ║    mecanismo que el benchmark de Portfolio (v3.46), aplicado     ║
+ * ║    por ticker en vez de a toda la cartera.                       ║
  * ║  CAMBIOS v3.47 (regresión de v3.44 encontrada al auditar):      ║
  * ║  - _candidatosRV() (sugiere tickers en "Acción Sugerida" de     ║
  * ║    Desbalanceo, Radar sección 1) seguía leyendo la columna S    ║
@@ -3676,9 +3689,12 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
   const hdrs = [
     'Ticker', 'Tipo', 'Clase', 'Fecha', 'Cantidad', 'Precio Operación (USD)',
     'Precio Actual (USD)', 'Variación %', 'Monto (USD)',
-    'Valor Actual (USD)', 'G/P (USD)', 'Nota'
+    'Valor Actual (USD)', 'G/P (USD)', 'Nota',
+    'SPY precio histórico', 'Flujo con signo (benchmark)', 'Acciones SPY simuladas',
+    'Clave benchmark', 'TIR si hubiera sido SPY',
   ];
   _setHeaders(HOJAS.DETALLE_COMPRAS, hdrs);
+  sheet.hideColumns(13, 5);
 
   // Solo tickers con posición abierta hoy — el detalle de algo ya cerrado
   // del todo no ayuda a decidir qué hacer ahora (para eso está Historial).
@@ -3782,13 +3798,74 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
     return a[3] < b[3] ? -1 : a[3] > b[3] ? 1 : 0;
   });
 
-  const nRows = filas.length;
-  sheet.getRange(2, 1, nRows, hdrs.length).setValues(filas);
+  // v3.48: a pedido ("quiero datos que me ayuden a tomar decisiones...
+  // en todos mis activos hago compras distribuidas") — se agrega, al
+  // final del bloque de cada ticker de Renta Variable, una fila de
+  // referencia que simula haber comprado/vendido S&P 500 (SPY) en las
+  // MISMAS fechas y montos que cada Compra/Venta real de ese ticker (no
+  // solo la primera compra — cada lote, para que el costo de
+  // oportunidad sea correcto con compras escalonadas en el tiempo).
+  const filasFinal = [];
+  const bloquesBenchmark = []; // { ticker, filaInicio, filaFinLotes, filaBenchmark } (fila real en la hoja, 1-indexada)
+  let idx = 0;
+  while (idx < filas.length) {
+    const ticker = filas[idx][0];
+    const clase  = filas[idx][2];
+    const filaInicioSheet = filasFinal.length + 2;
+    while (idx < filas.length && filas[idx][0] === ticker) {
+      filasFinal.push(filas[idx]);
+      idx++;
+    }
+    const filaFinLotesSheet = filasFinal.length + 1;
+    if (clase === 'Renta Variable') {
+      filasFinal.push([ticker, 'Ref. S&P 500', clase, new Date(), '', '', '', '', '', '', '', '']);
+      bloquesBenchmark.push({ ticker, filaInicioSheet, filaFinLotesSheet, filaBenchmarkSheet: filasFinal.length + 1 });
+    }
+  }
+
+  const nRows = filasFinal.length;
+  sheet.getRange(2, 1, nRows, 12).setValues(filasFinal);
 
   sheet.getRange(2, 5, nRows, 1).setNumberFormat('#,##0.000');
   sheet.getRange(2, 6, nRows, 2).setNumberFormat('"USD" #,##0.000');
   sheet.getRange(2, 8, nRows, 1).setNumberFormat('0.00%');
   sheet.getRange(2, 9, nRows, 3).setNumberFormat('"USD" #,##0.00');
+
+  // Columnas ocultas M/N/O: SPY histórico, flujo con signo, acciones SPY
+  // simuladas — fila por fila, solo para las filas de Compra/Venta
+  // (quedan en blanco en la fila "Ref. S&P 500", que se completa aparte
+  // más abajo con el agregado de todo el bloque).
+  const formulasM = [], formulasN = [], formulasO = [];
+  filasFinal.forEach((f, i) => {
+    const r = i + 2;
+    if (f[1] === 'Compra' || f[1] === 'Venta') {
+      formulasM.push([`=IFERROR(INDEX(GOOGLEFINANCE("SPY";"price";D${r});2;2);"")`]);
+      formulasN.push([`=IF(B${r}="Compra";-I${r};IF(B${r}="Venta";I${r};""))`]);
+      formulasO.push([`=IF(AND(M${r}<>"";N${r}<>"");-N${r}/M${r};"")`]);
+    } else {
+      formulasM.push(['']);
+      formulasN.push(['']);
+      formulasO.push(['']);
+    }
+  });
+  sheet.getRange(2, 13, nRows, 1).setFormulas(formulasM);
+  sheet.getRange(2, 14, nRows, 1).setFormulas(formulasN);
+  sheet.getRange(2, 15, nRows, 1).setFormulas(formulasO);
+
+  // Fila "Ref. S&P 500" de cada ticker: col N = valor hoy de las
+  // acciones SPY simuladas de todo el bloque; col P = clave para que
+  // Radar la encuentre con VLOOKUP; col Q = TIR si hubiera sido SPY,
+  // con el mismo método (XIRR) que la TIR real de Posiciones.
+  bloquesBenchmark.forEach(b => {
+    sheet.getRange(b.filaBenchmarkSheet, 14).setFormula(
+      `=IFERROR(SUM(O${b.filaInicioSheet}:O${b.filaFinLotesSheet})*GOOGLEFINANCE("SPY");"")`
+    );
+    sheet.getRange(b.filaBenchmarkSheet, 16).setValue(`${b.ticker}|BENCH`);
+    sheet.getRange(b.filaBenchmarkSheet, 17).setFormula(
+      `=IFERROR(XIRR(N${b.filaInicioSheet}:N${b.filaBenchmarkSheet};D${b.filaInicioSheet}:D${b.filaBenchmarkSheet});"Sin datos")`
+    );
+  });
+  sheet.getRange(2, 17, nRows, 1).setNumberFormat('0.00%');
 
   const reglas = [];
   [sheet.getRange(2, 8, nRows, 1), sheet.getRange(2, 11, nRows, 1)].forEach(rng => {
@@ -3804,15 +3881,15 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
   sheet.setConditionalFormatRules(reglas);
 
   // Separador visual entre tickers distintos
-  for (let i = 1; i < filas.length; i++) {
-    if (filas[i][0] !== filas[i - 1][0]) {
+  for (let i = 1; i < filasFinal.length; i++) {
+    if (filasFinal[i][0] !== filasFinal[i - 1][0]) {
       sheet.getRange(i + 2, 1, 1, hdrs.length)
         .setBorder(true, false, false, false, false, false,
           '#999999', SpreadsheetApp.BorderStyle.SOLID);
     }
   }
 
-  sheet.autoResizeColumns(1, hdrs.length);
+  sheet.autoResizeColumns(1, 12);
 }
 
 // ─────────────────────────────────────────────
@@ -5350,6 +5427,78 @@ function generarRadar() {
         (r.tir * 100).toFixed(2) + '%',
         estado
       ], color);
+      f++;
+    });
+  }
+
+  f++;
+
+  // ════════════════════════════════════════════════════════════
+  // SECCIÓN 7 — COSTO DE OPORTUNIDAD VS. S&P 500 (pérdidas sostenidas en RV)
+  // v3.48: a pedido explícito — no un flag genérico de "revisar", un
+  // número concreto: qué perdiste contra el índice, en plata, con las
+  // MISMAS fechas y montos que compraste de verdad (no solo la primera
+  // compra — ver Detalle_Compras, columnas ocultas M-Q). Sirve para
+  // decidir con un número en la mano, o para llevarle la pregunta
+  // concreta a tu asesora.
+  // ════════════════════════════════════════════════════════════
+  tit(f, '  📉  COSTO DE OPORTUNIDAD VS. S&P 500 (pérdidas sostenidas en Renta Variable)');
+  f++;
+
+  sheet.getRange(f, 1, 1, 1).merge().setValue(
+    'Posiciones con más de 6 meses y G/P No Realizado peor que -15% — comparado contra haber ' +
+    'comprado S&P 500 en las mismas fechas y montos que tus compras/ventas reales de ese ticker ' +
+    '(no incluye los dividendos propios del ticker ni del S&P 500 — comparación sobre precio).'
+  ).setFontColor('#666666').setFontStyle('italic').setWrap(true);
+  sheet.setRowHeight(f, 40);
+  f++;
+
+  sheet.getRange(f, 1, 1, 6).setValues([[
+    'Ticker', 'Hace cuánto', 'G/P No Real. %', 'Costo Invertido', 'TIR real', 'TIR si hubiera sido S&P 500'
+  ]]);
+  subtit(f, 6);
+  f++;
+
+  const UMBRAL_PERDIDA_SOSTENIDA = -0.15; // -15%
+  const MESES_MINIMOS_SOSTENIDA  = 6;
+  const candidatosOportunidad = [];
+  for (let i = 1; i < posData.length; i++) {
+    const clase = String(posData[i][23] || '');
+    if (clase !== 'Renta Variable') continue;
+    const ticker        = String(posData[i][0] || '').trim();
+    const gpPct          = parseFloat(posData[i][8]);
+    const primeraCompra = posData[i][27];
+    const costo          = parseFloat(posData[i][2]) || 0;
+    const tirReal        = parseFloat(posData[i][12]);
+    if (!ticker || isNaN(gpPct) || gpPct > UMBRAL_PERDIDA_SOSTENIDA) continue;
+    if (!primeraCompra) continue;
+    const meses = (new Date() - new Date(primeraCompra)) / (1000 * 60 * 60 * 24 * 30.44);
+    if (meses < MESES_MINIMOS_SOSTENIDA) continue;
+    candidatosOportunidad.push({ ticker, gpPct, costo, tirReal, meses });
+  }
+  candidatosOportunidad.sort((a, b) => a.gpPct - b.gpPct);
+
+  if (candidatosOportunidad.length === 0) {
+    fila(f, [
+      `Sin posiciones en pérdida sostenida (más de ${MESES_MINIMOS_SOSTENIDA} meses, peor que ` +
+      `${(UMBRAL_PERDIDA_SOSTENIDA * 100).toFixed(0)}%) por ahora`,
+      '', '', '', '', ''
+    ], C.GRIS);
+    f++;
+  } else {
+    candidatosOportunidad.forEach(c => {
+      const años    = c.meses / 12;
+      const haceStr = años >= 1 ? `${años.toFixed(1)} años` : `${Math.round(c.meses)} meses`;
+      fila(f, [
+        c.ticker, haceStr, '', 'USD ' + c.costo.toFixed(2),
+        !isNaN(c.tirReal) ? (c.tirReal * 100).toFixed(2) + '%' : 'Sin datos',
+        ''
+      ], C.ROJO);
+      sheet.getRange(f, 3).setValue(c.gpPct).setNumberFormat('0.0%');
+      sheet.getRange(f, 6).setFormula(
+        `=IFERROR(VLOOKUP("${c.ticker}|BENCH";Detalle_Compras!P:Q;2;0);"Sin datos")`
+      );
+      sheet.getRange(f, 6).setNumberFormat('0.00%');
       f++;
     });
   }
