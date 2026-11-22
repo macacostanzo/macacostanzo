@@ -1,8 +1,21 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.43                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.44                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.44 (sacado Precio Teórico/Prima vs. NYSE):          ║
+ * ║  - Un CEDEAR se arbitra todo el tiempo contra su subyacente,    ║
+ * ║    así que la Prima/Desc % contra el precio teórico (cols Q/R/S ║
+ * ║    de Posiciones, con GOOGLEFINANCE) era en la práctica ruido    ║
+ * ║    de centavos, no una señal útil para decidir dónde comprar —  ║
+ * ║    a pedido explícito, se sacó. "Conviene Operar" (col T) ahora ║
+ * ║    compara siempre ARS vs USD directo del mismo ticker, para     ║
+ * ║    todos los CEDEARs (antes solo los sin ratio+NYSE usaban esa   ║
+ * ║    comparación más simple).                                      ║
+ * ║  - Sugerencia de Inversión: Renta Variable ya no rankea por       ║
+ * ║    Prima/Desc vs. teórico — ahora rankea por qué tan por debajo  ║
+ * ║    de tu propio costo promedio está cada ticker (promediar a la  ║
+ * ║    baja), sin depender de ningún dato externo.                   ║
  * ║  CAMBIOS v3.43 (CRCEO, BOPREAL, IRCFO — a pedido explícito):   ║
  * ║  - Ingresos por Renta/Dividendos ignoraba cualquier monto       ║
  * ║    negativo (retenciones/correcciones) en vez de restarlo —    ║
@@ -2886,10 +2899,10 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
   // N  % Portfolio
   // O  % su Clase
   // P  % su Tipo
-  // Q  Precio Teórico USD   ← GOOGLEFINANCE
-  // R  Precio Teórico ARS
-  // S  Prima/Desc %
-  // T  Conviene Operar
+  // Q  (sin usar desde v3.44 — antes Precio Teórico USD/GOOGLEFINANCE)
+  // R  (sin usar desde v3.44 — antes Precio Teórico ARS)
+  // S  (sin usar desde v3.44 — antes Prima/Desc % vs. ese teórico)
+  // T  Conviene Operar — ARS vs USD del mismo ticker
   //
   // OCULTAS:
   // U  Nombre
@@ -2904,7 +2917,7 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
            'Precio USD','Precio ARS','Valor USD','G/P No Real. USD',
            'G/P %','G/P Real. USD','Ingresos USD','Retorno Total USD',
            'TIR','% Portfolio','% su Clase','% su Tipo',
-           'Precio Teórico USD','Precio Teórico ARS','Prima/Desc %',
+           '(sin usar)','(sin usar)','(sin usar)',
            'Conviene Operar','$ Implícito ARS/USD','vs MEP %'];
 
   _setHeaders(HOJAS.POSICIONES, hdrs);
@@ -2971,9 +2984,6 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
     if (valorUSD > 0 && flujos.length > 0 && flujos.some(f => f.monto < 0)) {
       tir = _xirr([...flujos, { fecha: hoyStr, monto: valorUSD }]);
     }
-
-    // Precio teórico (solo para CEDEARs con ratio y ticker NYSE)
-    // Se calculará con GOOGLEFINANCE en fórmula
 
     // Alerta de split/evento corporativo: compara la cantidad que sale de
     // sumar los movimientos históricos contra la que informa HOY la propia
@@ -3050,53 +3060,18 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
       `=IFERROR(G${r}/SUMIF(Y$2:Y$1000;Y${r};G$2:G$1000);"")`
     );
 
-// Col Q: Precio Teórico USD (solo CEDEARs con ratio y ticker NYSE)
-    if (ratio && pos.tickerNYSE && pos.clase === 'Renta Variable') {
-      const exchange   = pos.exchange || 'NYSE';
-      const nyseTicker = pos.tickerNYSE;      
-      sheet.getRange(r, 17).setFormula(
-        `=IFERROR(GOOGLEFINANCE("${exchange}:${nyseTicker}";"price")*${ratio.den}/${ratio.num};"")`
-      );
-
-      // Col R: Precio Teórico ARS
-      sheet.getRange(r, 18).setFormula(
-        `=IFERROR(Q${r}*${fMEP};"")`
-      );
-
-      // Col S: Prima/Descuento %
-      sheet.getRange(r, 19).setFormula(
-        `=IFERROR(IF(Q${r}<>0;(E${r}-Q${r})/Q${r};"");"")`
-      );
-// Col T: Conviene Operar — compra Y venta — con teórico NYSE
-      sheet.getRange(r, 20).setFormula(
-        `=IFERROR(IF(E${r}="";"";IF(Q${r}="";"Sin teórico";` +
-        `IF(AND(E${r}>Q${r}*1,01;F${r}/${fMEP}>Q${r}*1,01);` +
-          `"🔴 Caro en ambas · Evitá comprar · USD: "&TEXT((E${r}-Q${r})/Q${r};"0,0%")&" · ARS: "&TEXT((F${r}/${fMEP}-Q${r})/Q${r};"0,0%");` +
-        `IF(AND(E${r}<Q${r}*0,99;F${r}/${fMEP}<Q${r}*0,99);` +
-          `"🟢 Barato en ambas · Comprá cualquiera · USD: "&TEXT((E${r}-Q${r})/Q${r};"0,0%")&" · ARS: "&TEXT((F${r}/${fMEP}-Q${r})/Q${r};"0,0%");` +
-        `IF(F${r}/${fMEP}>E${r}*1,005;` +
-          `"🟡 ARS "&TEXT((F${r}/${fMEP}-E${r})/E${r};"0,0%")&" más caro · Comprá USD · Vendé ARS";` +
-        `IF(E${r}>F${r}/${fMEP}*1,005;` +
-          `"🟡 USD "&TEXT((E${r}-F${r}/${fMEP})/(F${r}/${fMEP});"0,0%")&" más caro · Comprá ARS · Vendé USD";` +
-          `"⚪ Sin diferencia entre ARS y USD"` +
-        `))))));"")`
-      );
-
-    } else if (pos.clase === 'Renta Variable') {
-      // Sin teórico NYSE — solo comparar ARS vs USD
-      sheet.getRange(r, 20).setFormula(
-        `=IFERROR(IF(AND(E${r}<>"";F${r}<>"";${fMEP}<>0);` +
-        `IF(F${r}/${fMEP}>E${r}*1,005;` +
-          `"🟡 ARS "&TEXT((F${r}/${fMEP}-E${r})/E${r};"0,0%")&" más caro · Comprá USD · Vendé ARS";` +
-        `IF(E${r}>F${r}/${fMEP}*1,005;` +
-          `"🟡 USD "&TEXT((E${r}-F${r}/${fMEP})/(F${r}/${fMEP});"0,0%")&" más caro · Comprá ARS · Vendé USD";` +
-          `"⚪ Sin diferencia entre ARS y USD"` +
-        `));"");"")`
-      );
-
-    } else if (pos.clase === 'Renta Fija' &&
-               _esRF(pos.tipoActivo)) {
-      // ONs y Bonos: comparar precio ARS/MEP vs precio USD directo
+// v3.44: se sacó Precio Teórico (cols Q/R, GOOGLEFINANCE) y Prima/Desc
+    // vs. ese teórico (col S) — un CEDEAR se arbitra todo el tiempo
+    // contra su subyacente, así que esa prima era en la práctica ruido
+    // de centavos (spread, timing de GOOGLEFINANCE), no una señal
+    // accionable para decidir dónde comprar. Las columnas quedan vacías
+    // (no se borran para no correr los índices fijos que usa el resto
+    // del código — U/V/X/Y/Z siguen en el mismo lugar). "Conviene
+    // Operar" (col T) ahora compara siempre ARS vs USD directo, sin el
+    // branch que dependía del teórico.
+    if (pos.clase === 'Renta Variable' ||
+        (pos.clase === 'Renta Fija' && _esRF(pos.tipoActivo))) {
+      // Comparar precio ARS/MEP vs precio USD directo del mismo ticker
       sheet.getRange(r, 20).setFormula(
         `=IFERROR(IF(AND(E${r}<>"";F${r}<>"";${fMEP}<>0);` +
         `IF(F${r}/${fMEP}>E${r}*1,005;` +
@@ -3129,9 +3104,6 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
   sheet.getRange(2, 12, nRows, 1).setNumberFormat('"USD" #,##0.00');  // Retorno
   sheet.getRange(2, 13, nRows, 1).setNumberFormat('0.00%');           // TIR
   sheet.getRange(2, 14, nRows, 3).setNumberFormat('0.0%');            // % Portfolio/Clase/Tipo
-  sheet.getRange(2, 17, nRows, 2).setNumberFormat('"USD" #,##0.000'); // Teórico USD
-  sheet.getRange(2, 18, nRows, 1).setNumberFormat('"ARS" #,##0.00');  // Teórico ARS
-  sheet.getRange(2, 19, nRows, 1).setNumberFormat('0.00%');           // Prima/Desc
   sheet.getRange(2, 21, nRows, 1).setNumberFormat('"ARS" #,##0.00'); // $ Implícito
   sheet.getRange(2, 22, nRows, 1).setNumberFormat('0.00%');          // vs MEP %
 
@@ -3153,17 +3125,6 @@ function _escribirPosiciones(abiertas, ratiosMap, flujosPorTicker, preciosIOL) {
       .setBackground('#fce8e6').setFontColor('#a61c00')
       .setRanges([rng]).build());
   });
-
-  // Prima/Desc (col S)
-  const primaRange = sheet.getRange(2, 19, nRows, 1);
-  reglas.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenNumberGreaterThan(0.01)
-    .setBackground('#fce8e6').setFontColor('#a61c00')
-    .setRanges([primaRange]).build());
-  reglas.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenNumberLessThan(-0.01)
-    .setBackground('#d9ead3').setFontColor('#274e13')
-    .setRanges([primaRange]).build());
 
   // Alerta de split/canje (col AE) — resaltar en rojo si hay algo para revisar
   const alertaCantidadRange = sheet.getRange(2, 31, nRows, 1);
@@ -4803,10 +4764,16 @@ function generarRadar() {
   // ════════════════════════════════════════════════════════════
   // SECCIÓN 2 — SUGERENCIA DE INVERSIÓN (dinero disponible)
   // Mirada de "asesor largo placista": priorizar sumar a lo que ya se
-  // tiene, comprando donde el precio está más lejos de su valor real
-  // (Prima/Desc % contra el teórico NYSE/ratio en Renta Variable, TIR
-  // actual en Renta Fija), sin superar los límites de concentración ni
-  // gastar más de lo que hay realmente disponible.
+  // tiene, comprando donde el precio está más lejos de tu propio costo
+  // promedio (Renta Variable) o donde la TIR actual es mejor (Renta
+  // Fija), sin superar los límites de concentración ni gastar más de lo
+  // que hay realmente disponible.
+  // v3.44: Renta Variable rankeaba por Prima/Desc % contra el precio
+  // teórico NYSE/ratio — se sacó (ver nota en generarPosiciones: un
+  // CEDEAR arbitrado no se aleja en serio de su teórico, esa prima era
+  // ruido, no una señal accionable). Ahora rankea por qué tan por debajo
+  // de tu propio costo promedio está cotizando cada ticker — la lógica
+  // de "promediar a la baja", sin depender de ningún dato externo.
   // ════════════════════════════════════════════════════════════
   tit(f, '  💡  SUGERENCIA DE INVERSIÓN — ¿DÓNDE PONER EL EFECTIVO DISPONIBLE?');
   f++;
@@ -4852,21 +4819,24 @@ function generarRadar() {
       return { sugerencias, restante };
     }
 
-    // Candidatos Renta Variable: más barato vs precio teórico primero
+    // Candidatos Renta Variable: más lejos por debajo de tu propio costo
+    // promedio primero (promediar a la baja) — ver nota más arriba.
     const candRV = [];
     for (let i = 1; i < posData.length; i++) {
       if (String(posData[i][23] || '') !== 'Renta Variable') continue;
-      const ticker = String(posData[i][0] || '').trim();
-      const prima  = parseFloat(posData[i][18]);
-      const valorUSD = parseFloat(posData[i][6]) || 0;
-      if (!ticker || isNaN(prima)) continue; // sin precio teórico calculado, no se puede evaluar
+      const ticker     = String(posData[i][0] || '').trim();
+      const precioProm = parseFloat(posData[i][3]) || 0;
+      const precioUSD  = parseFloat(posData[i][4]) || 0;
+      const valorUSD   = parseFloat(posData[i][6]) || 0;
+      if (!ticker || !precioProm || !precioUSD) continue;
+      const distancia = (precioUSD - precioProm) / precioProm;
       candRV.push({
         ticker, valorUSD,
-        prima,
-        motivo: `${prima <= 0 ? '🟢' : '🟡'} ${(prima * 100).toFixed(1)}% vs precio teórico (NYSE/ratio)`,
+        distancia,
+        motivo: `${distancia <= 0 ? '🟢' : '🟡'} ${(distancia * 100).toFixed(1)}% vs tu propio costo promedio`,
       });
     }
-    candRV.sort((a, b) => a.prima - b.prima);
+    candRV.sort((a, b) => a.distancia - b.distancia);
 
     // Candidatos Renta Fija: mejor TIR actual primero
     const candRF = [];

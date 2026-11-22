@@ -107,6 +107,39 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.44 — Sacado Precio Teórico/Prima vs. NYSE (a pedido: "ni la prima etc")
+
+Feedback directo de uso: "las comparaciones contra precio teórico no me
+están siendo muy útiles". Tiene sentido — un CEDEAR se arbitra todo el
+tiempo contra su subyacente (es la razón de ser del instrumento), así
+que la prima/descuento contra el precio teórico (`GOOGLEFINANCE` del
+ticker NYSE × ratio) casi siempre es ruido de centavos: spread, timing
+de la cotización, liquidez del ratio — no una oportunidad real para
+alguien que invierte a largo plazo.
+
+**Sacado**:
+- Posiciones: columnas Q (Precio Teórico USD), R (Precio Teórico ARS) y
+  S (Prima/Desc %) dejan de calcularse — quedan vacías (no se borran
+  para no correr los índices fijos que usa el resto del código: U/V/X/
+  Y/Z siguen en el mismo lugar).
+- "Conviene Operar" (col T): antes, para CEDEARs con ratio y ticker
+  NYSE cargado, usaba una fórmula más compleja que metía el teórico
+  ("Caro en ambas", "Barato en ambas"); ahora usa siempre la
+  comparación simple ARS-vs-USD-del-mismo-ticker que ya usaban el
+  resto de los casos (acciones sin ratio, ONs y bonos) — un solo
+  criterio para todos.
+- Radar → Sugerencia de Inversión: Renta Variable rankeaba los
+  candidatos por Prima/Desc vs. teórico; ahora rankea por qué tan por
+  debajo de tu propio costo promedio está cotizando cada ticker hoy —
+  la lógica de "promediar a la baja", calculable con datos que ya
+  tenés (Precio Prom vs. Precio Actual), sin depender de
+  `GOOGLEFINANCE` ni de tener ratio/ticker NYSE cargado.
+
+**Lo que NO se tocó**: el Arbitraje ARS/USD del Radar (v3.41) y "Conviene
+Operar" ya no tienen nada que ver con el precio teórico — comparan el
+mismo ticker cotizado en pesos vs. en dólares, un concepto distinto y
+sin este problema (no depende de ningún arbitraje de mercado externo).
+
 ## v3.43 — CRCEO, BOPREAL e IRCFO (a pedido explícito: "encará los de CRCEO, BOPREAL e IRCFO también")
 
 **1. CRCEO — en realidad era un bug de toda la cuenta, no solo de CRCEO.**
