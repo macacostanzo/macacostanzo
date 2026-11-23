@@ -107,6 +107,33 @@ adivinando endpoints contra cuentas reales** y mantener la carga manual en
 Movimientos de Cuenta" queda en el script sin usarse, por si en algún
 momento se retoma con acceso a la documentación oficial.
 
+## v3.50 — El benchmark SPY seguía fallando después de v3.49
+
+Reportado con una captura: "No está funcionando" — Portfolio mostraba
+"Sin datos (falta cotización histórica)" en vez de un número. Bajé la
+planilla de nuevo: la red de seguridad de v3.49 estaba haciendo
+exactamente lo que tenía que hacer (avisar en vez de mostrar un número
+corrupto), pero la causa de fondo seguía ahí — dos fechas de depósito
+(2021-05-05, un miércoles; 2021-06-03, un jueves — ninguna fin de
+semana ni feriado) tenían la cotización histórica de SPY en blanco, con
+solo ~15 pedidos totales a GOOGLEFINANCE en esa hoja. v3.49 bajó el
+volumen de pedidos (de decenas a un puñado), pero la falla seguía
+pasando igual — así que no era (solo) un problema de volumen, sino una
+falla transitoria de GOOGLEFINANCE en sí, del lado de Google.
+
+**Fix**: si falla la cotización en la fecha exacta, ahora se reintenta
+automáticamente con el día siguiente y, si tampoco, con el día
+anterior, antes de darse por vencido. Esto corre tanto en el benchmark
+de Portfolio como en el de cada ticker.
+
+**Si "Sin datos" vuelve a aparecer** después de este cambio: probá
+correr "Actualizar Todo" de nuevo — cada corrida reescribe las fórmulas
+desde cero, así que es un intento totalmente nuevo contra GOOGLEFINANCE,
+no un reintento de lo mismo que ya falló. No hay garantía de que esto
+sea 100% infalible — GOOGLEFINANCE histórico es conocido por fallar
+ocasionalmente sin aviso — pero entre el menor volumen de v3.49 y el
+reintento con día siguiente/anterior de v3.50, debería ser raro verlo.
+
 ## v3.49 — Fix: el benchmark SPY daba números sin sentido (-63,54%)
 
 Reportado apenas se vio v3.48 en uso: "está raro que la TIR anualizada

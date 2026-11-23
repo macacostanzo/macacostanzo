@@ -1,8 +1,14 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         MONITOR DE INVERSIONES IOL — v3.49                   ║
+ * ║         MONITOR DE INVERSIONES IOL — v3.50                   ║
  * ║         Google Apps Script                                    ║
  * ╠══════════════════════════════════════════════════════════════╣
+ * ║  CAMBIOS v3.50 (benchmark SPY seguía fallando tras v3.49):      ║
+ * ║  - "Sin datos (falta cotización histórica)" seguía apareciendo  ║
+ * ║    con solo ~15 pedidos a GOOGLEFINANCE, en fechas hábiles de    ║
+ * ║    semana sin nada raro — una falla transitoria de Google, no    ║
+ * ║    de volumen. Ahora, si falla la fecha exacta, se reintenta con ║
+ * ║    el día siguiente y el día anterior antes de rendirse.         ║
  * ║  CAMBIOS v3.49 (fix: benchmark SPY daba números sin sentido):  ║
  * ║  - Reportado un -63,54% de "TIR si hubiera sido S&P 500" —      ║
  * ║    v3.48 pedía una cotización histórica a GOOGLEFINANCE por     ║
@@ -1880,6 +1886,20 @@ function _num(val) {
 function _esRF(tipoActivo) {
   const t = String(tipoActivo || '').trim().toLowerCase();
   return t === 'on' || t === 'bono';
+}
+
+// v3.50: GOOGLEFINANCE histórico puede fallar sin motivo aparente en una
+// fecha puntual (confirmado: fechas hábiles de semana, sin nada raro,
+// quedaban en blanco incluso después de bajar la cantidad de pedidos
+// simultáneos en v3.49 — parece ser una falla transitoria del lado de
+// Google, no un problema con la fecha en sí). Como red de seguridad
+// adicional, si falla la fecha exacta se reintenta con el día siguiente
+// y el día anterior antes de rendirse — generalmente alcanza para que
+// la celda no quede vacía.
+function _formulaSPYHistorico(celdaFecha) {
+  return `IFERROR(INDEX(GOOGLEFINANCE("SPY";"price";${celdaFecha});2;2);` +
+         `IFERROR(INDEX(GOOGLEFINANCE("SPY";"price";${celdaFecha}+1);2;2);` +
+         `IFERROR(INDEX(GOOGLEFINANCE("SPY";"price";${celdaFecha}-1);2;2);"")))`;
 }
 
 function _fmtFecha(val) {
@@ -3893,7 +3913,7 @@ function _escribirDetalleCompras(movs, abiertas, preciosIOL) {
     const r = i + 2;
     const esLoteDeCandidato = (f[1] === 'Compra' || f[1] === 'Venta') && tickersCandidatosBenchmark.has(f[0]);
     if (esLoteDeCandidato) {
-      formulasM.push([`=IFERROR(INDEX(GOOGLEFINANCE("SPY";"price";D${r});2;2);"")`]);
+      formulasM.push([`=${_formulaSPYHistorico('D' + r)}`]);
       formulasN.push([`=IF(B${r}="Compra";-I${r};IF(B${r}="Venta";I${r};""))`]);
       formulasO.push([`=IF(AND(M${r}<>"";N${r}<>"");-N${r}/M${r};"")`]);
     } else {
@@ -4051,7 +4071,7 @@ function _escribirFlujosTIR(movs) {
   // en las demás filas, para no pedir más cotizaciones históricas de las
   // necesarias.
   sheet.getRange(2, 8, rows.length, 1).setFormulas(
-    rows.map((r, i) => [`=IF(C${i + 2}<>0;IFERROR(INDEX(GOOGLEFINANCE("SPY";"price";A${i + 2});2;2);"");"")`])
+    rows.map((r, i) => [`=IF(C${i + 2}<>0;${_formulaSPYHistorico('A' + (i + 2))};"")`])
   );
   sheet.getRange(2, 9, rows.length, 1).setFormulas(
     rows.map((r, i) => [`=IF(AND(C${i + 2}<>0;H${i + 2}<>"");-C${i + 2}/H${i + 2};0)`])
